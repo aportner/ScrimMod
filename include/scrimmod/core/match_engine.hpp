@@ -11,6 +11,8 @@ namespace scrimmod::core {
 enum class EffectType : std::uint8_t {
     ExecutePregameConfig,
     AssignPlayerTeam,
+    EnsureKnifeLoadout,
+    RestartRound,
 };
 
 enum class PlayerDestination : std::uint8_t { Terrorist, CounterTerrorist, Spectator };
@@ -100,13 +102,16 @@ class MatchEngine final {
     [[nodiscard]] CaptainSelectionResult clear_captain(LogicalTeam team);
     [[nodiscard]] TransitionResult confirm_captains(Side team_a_knife_side);
     [[nodiscard]] std::vector<Effect> reconciliation_effects() const;
+    [[nodiscard]] bool can_player_choose_team(std::string player_id) const;
+    [[nodiscard]] bool can_player_acquire_weapon(std::string player_id, bool is_knife) const;
 
   private:
     [[nodiscard]] static bool is_legal_transition(Phase from, Phase to) noexcept;
     [[nodiscard]] static std::string normalize_player_id(std::string player_id);
     [[nodiscard]] TeamState& mutable_team(LogicalTeam team) noexcept;
     void commit_captains();
-    void append_knife_setup_effects(TransitionResult& result) const;
+    void append_knife_reconciliation_effects(TransitionResult& result) const;
+    [[nodiscard]] bool is_knife_phase() const noexcept;
 
     MatchState state_{};
 };

@@ -50,7 +50,10 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
     state_.phase_ = target;
     if (target == Phase::KnifeSetup) {
         commit_captains();
-        append_knife_setup_effects(result);
+        append_knife_reconciliation_effects(result);
+    } else if (target == Phase::KnifeLive) {
+        append_knife_reconciliation_effects(result);
+        result.effects.push_back({EffectType::RestartRound, {}});
     }
     result.changed = true;
     return result;
@@ -314,10 +317,30 @@ TransitionResult MatchEngine::confirm_captains(const Side team_a_knife_side) {
 
 std::vector<Effect> MatchEngine::reconciliation_effects() const {
     TransitionResult result{};
-    if (state_.phase_ == Phase::KnifeSetup) {
-        append_knife_setup_effects(result);
+    if (is_knife_phase()) {
+        append_knife_reconciliation_effects(result);
     }
     return result.effects;
+}
+
+bool MatchEngine::can_player_choose_team(std::string player_id) const {
+    player_id = normalize_player_id(std::move(player_id));
+    return !is_knife_phase() || state_.players_.find(player_id) == state_.players_.end();
+}
+
+bool MatchEngine::can_player_acquire_weapon(std::string player_id, const bool is_knife) const {
+    player_id = normalize_player_id(std::move(player_id));
+    if (!is_knife_phase()) {
+        return true;
+    }
+
+    const auto player = state_.players_.find(player_id);
+    if (player == state_.players_.end()) {
+        return false;
+    }
+    const bool is_captain = state_.team_a_.captain_player_id == player_id ||
+                            state_.team_b_.captain_player_id == player_id;
+    return is_captain && is_knife;
 }
 
 TeamState& MatchEngine::mutable_team(const LogicalTeam team) noexcept {
@@ -333,7 +356,7 @@ void MatchEngine::commit_captains() {
     state_.players_.at(captain_b).logical_team = LogicalTeam::B;
 }
 
-void MatchEngine::append_knife_setup_effects(TransitionResult& result) const {
+void MatchEngine::append_knife_reconciliation_effects(TransitionResult& result) const {
     const std::string& captain_a = *state_.team_a_.captain_player_id;
     const std::string& captain_b = *state_.team_b_.captain_player_id;
     std::vector<std::string> connected_player_ids;
@@ -358,7 +381,15 @@ void MatchEngine::append_knife_setup_effects(TransitionResult& result) const {
                               : PlayerDestination::CounterTerrorist;
         }
         result.effects.push_back({EffectType::AssignPlayerTeam, player_id, destination});
+        if (player_id == captain_a || player_id == captain_b) {
+            result.effects.push_back(
+                {EffectType::EnsureKnifeLoadout, player_id, PlayerDestination::Spectator});
+        }
     }
+}
+
+bool MatchEngine::is_knife_phase() const noexcept {
+    return state_.phase_ == Phase::KnifeSetup || state_.phase_ == Phase::KnifeLive;
 }
 
 bool MatchEngine::is_legal_transition(const Phase from, const Phase to) noexcept {

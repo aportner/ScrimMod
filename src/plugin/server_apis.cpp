@@ -109,4 +109,17 @@ bool assign_player_team(edict_s* entity, const ServerPlayerTeam team) noexcept {
     return assign_regamedll_player_team(entity, team);
 }
 
+bool ensure_knife_loadout(edict_s* entity) noexcept {
+    return ensure_regamedll_knife_loadout(entity);
+}
+
+bool install_gameplay_hooks(const PlayerSpawnListener spawn_listener,
+                            const TeamChoiceListener team_choice_listener,
+                            const WeaponAcquireListener weapon_acquire_listener) noexcept {
+    return install_regamedll_gameplay_hooks(spawn_listener, team_choice_listener,
+                                            weapon_acquire_listener);
+}
+
+void remove_gameplay_hooks() noexcept { remove_regamedll_gameplay_hooks(); }
+
 } // namespace scrimmod::plugin

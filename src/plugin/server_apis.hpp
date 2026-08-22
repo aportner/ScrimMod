@@ -30,6 +30,9 @@ struct ApiStatus {
 };
 
 using CvarListener = void (*)(const char* new_value);
+using PlayerSpawnListener = void (*)(edict_s* entity);
+using TeamChoiceListener = bool (*)(edict_s* entity);
+using WeaponAcquireListener = bool (*)(edict_s* entity, bool is_knife);
 enum class ServerPlayerTeam { Terrorist, CounterTerrorist, Spectator };
 
 [[nodiscard]] ApiStatus initialize_server_apis(const char* game_dll_path) noexcept;
@@ -38,5 +41,10 @@ void shutdown_server_apis() noexcept;
 [[nodiscard]] bool add_cvar_listener(const char* name, CvarListener listener) noexcept;
 void remove_cvar_listener(const char* name, CvarListener listener) noexcept;
 [[nodiscard]] bool assign_player_team(edict_s* entity, ServerPlayerTeam team) noexcept;
+[[nodiscard]] bool ensure_knife_loadout(edict_s* entity) noexcept;
+[[nodiscard]] bool install_gameplay_hooks(PlayerSpawnListener spawn_listener,
+                                          TeamChoiceListener team_choice_listener,
+                                          WeaponAcquireListener weapon_acquire_listener) noexcept;
+void remove_gameplay_hooks() noexcept;
 
 } // namespace scrimmod::plugin

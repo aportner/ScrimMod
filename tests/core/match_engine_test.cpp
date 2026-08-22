@@ -190,8 +190,8 @@ int main() {
     require(engine.state().team(scrimmod::core::LogicalTeam::B).current_side ==
                 scrimmod::core::Side::Terrorist,
             "confirmation stores the opposite Team B knife side");
-    require(knife_setup.effects.size() == 3,
-            "knife setup emits one placement for each connected player");
+    require(knife_setup.effects.size() == 5,
+            "knife setup emits placements plus both captain loadouts");
     const auto has_assignment =
         [&knife_setup](const std::string& player_id,
                        const scrimmod::core::PlayerDestination destination) {
@@ -207,6 +207,10 @@ int main() {
             "Team B captain is assigned to opposite T side");
     require(has_assignment("STEAM_0:0:30", scrimmod::core::PlayerDestination::Spectator),
             "non-captain is assigned to spectator");
+    const auto knife_loadout_count = static_cast<int>(std::count_if(
+        knife_setup.effects.begin(), knife_setup.effects.end(),
+        [](const auto& effect) { return effect.type == EffectType::EnsureKnifeLoadout; }));
+    require(knife_loadout_count == 2, "knife setup equips exactly both captains");
     const auto reconciliation = engine.reconciliation_effects();
     require(reconciliation.size() == knife_setup.effects.size(),
             "knife setup reconciliation reproduces every placement idempotently");
@@ -218,6 +222,26 @@ int main() {
 
     const auto same_phase = engine.transition_to(Phase::KnifeSetup);
     require(same_phase.ok() && !same_phase.changed, "same-phase transition is idempotent");
+    require(!engine.can_player_choose_team("STEAM_0:1:10"),
+            "captain team choices are locked during knife setup");
+    require(!engine.can_player_choose_team("STEAM_0:0:30"),
+            "non-captain team choices are locked during knife setup");
+    require(engine.can_player_acquire_weapon("STEAM_0:1:10", true),
+            "captain may acquire a knife during knife setup");
+    require(!engine.can_player_acquire_weapon("STEAM_0:1:10", false),
+            "captain may not acquire another weapon during knife setup");
+    require(!engine.can_player_acquire_weapon("STEAM_0:0:30", true),
+            "spectating non-captain may not acquire a weapon during knife setup");
+
+    const auto knife_live = engine.transition_to(Phase::KnifeLive);
+    require(knife_live.ok() && knife_live.changed, "knife setup can advance to knife live");
+    require(engine.state().phase() == Phase::KnifeLive, "knife start updates central phase");
+    require(std::count_if(
+                knife_live.effects.begin(), knife_live.effects.end(),
+                [](const auto& effect) { return effect.type == EffectType::RestartRound; }) == 1,
+            "knife start emits exactly one round restart");
+    require(!engine.can_player_acquire_weapon("STEAM_0:1:10", false),
+            "knife-only acquisition remains active during knife live");
 
     const auto disabled = engine.set_enabled(false);
     require(disabled.ok() && disabled.changed, "disabling active engine changes state");
@@ -226,6 +250,10 @@ int main() {
     require(engine.state().players().empty(), "disable clears tracked players");
     require(!engine.state().eligible_pool_captured(), "disable clears eligible capture state");
     require(engine.state().eligible_players().empty(), "disable clears eligible players");
+    require(engine.can_player_choose_team("STEAM_0:1:10"),
+            "disable removes team-choice restrictions");
+    require(engine.can_player_acquire_weapon("STEAM_0:1:10", false),
+            "disable removes weapon restrictions");
     require(disabled.effects.size() == 1, "disable emits one reconciliation effect");
     require(disabled.effects.front().type == EffectType::ExecutePregameConfig,
             "disable emits pregame config effect");

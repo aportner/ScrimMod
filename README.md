@@ -159,8 +159,18 @@ Confirmation requires two different eligible players and advances the authoritat
 phase to `KnifeSetup`. It randomly assigns Team A and Team B to opposite CT/T sides,
 moves both captains through ReGameDLL's normal team-change path, and moves every
 other connected player to spectator. These placements are idempotently reconciled
-when another player connects. This checkpoint does not yet block subsequent manual
-team changes or enforce knife-only play.
+when another player connects.
+
+Start the knife round with:
+
+```text
+scrim_knife_start
+```
+
+This advances to `KnifeLive`, queues `sv_restart 1`, strips both captains to knives
+after default spawn equipment, prevents them from acquiring other weapons, and
+blocks tracked players from changing teams through the normal team menu. Weapon and
+team restrictions remain active throughout `KnifeSetup` and `KnifeLive`.
 
 ### Bot end-to-end testing
 

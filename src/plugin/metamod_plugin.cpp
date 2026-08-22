@@ -145,8 +145,38 @@ void apply_effects(const std::vector<scrimmod::core::Effect>& effects) {
             }
             break;
         }
+        case scrimmod::core::EffectType::EnsureKnifeLoadout: {
+            edict_t* entity = find_connected_entity(effect.player_id);
+            if (entity != nullptr && !scrimmod::plugin::ensure_knife_loadout(entity)) {
+                server_print("[ScrimMod] ReGameDLL could not enforce a knife loadout.\n");
+            }
+            break;
+        }
+        case scrimmod::core::EffectType::RestartRound:
+            if (g_engfuncs.pfnServerCommand != nullptr) {
+                g_engfuncs.pfnServerCommand("sv_restart 1\n");
+            }
+            break;
         }
     }
+}
+
+void on_player_spawn(edict_t* entity) {
+    const auto identity = get_player_identity(entity, true);
+    if (identity.has_value()) {
+        apply_effects(g_match_engine.reconciliation_effects());
+    }
+}
+
+bool allow_team_choice(edict_t* entity) {
+    const auto identity = get_player_identity(entity, true);
+    return !identity.has_value() || g_match_engine.can_player_choose_team(identity->player_id);
+}
+
+bool allow_weapon_acquisition(edict_t* entity, const bool is_knife) {
+    const auto identity = get_player_identity(entity, true);
+    return !identity.has_value() ||
+           g_match_engine.can_player_acquire_weapon(identity->player_id, is_knife);
 }
 
 void track_connected_player(edict_t* entity) {
@@ -476,6 +506,25 @@ void confirm_captains() {
     server_print("[ScrimMod] Captains confirmed; entered KnifeSetup.\n");
 }
 
+void start_knife_round() {
+    if (g_engfuncs.pfnCmd_Argc() != 1) {
+        server_print("Usage: scrim_knife_start\n");
+        return;
+    }
+
+    const auto result = g_match_engine.transition_to(scrimmod::core::Phase::KnifeLive);
+    if (!result.ok()) {
+        server_print("[ScrimMod] Cannot start knife round outside KnifeSetup.\n");
+        return;
+    }
+    if (!result.changed) {
+        server_print("[ScrimMod] Knife round is already live.\n");
+        return;
+    }
+    apply_effects(result.effects);
+    server_print("[ScrimMod] Knife round starting; queued sv_restart 1.\n");
+}
+
 } // namespace
 
 C_DLLEXPORT void WINAPI GiveFnptrsToDll(enginefuncs_t* engine_functions, globalvars_t* globals) {
@@ -537,6 +586,15 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS* function_table,
         gpGamedllFuncs = nullptr;
         return FALSE;
     }
+    if (!scrimmod::plugin::install_gameplay_hooks(on_player_spawn, allow_team_choice,
+                                                  allow_weapon_acquisition)) {
+        server_print("[ScrimMod] Cannot load: failed to register ReGameDLL gameplay hooks.\n");
+        scrimmod::plugin::remove_cvar_listener(g_scrim_enabled.name, apply_enabled_value);
+        scrimmod::plugin::shutdown_server_apis();
+        gpMetaGlobals = nullptr;
+        gpGamedllFuncs = nullptr;
+        return FALSE;
+    }
 
     g_engfuncs.pfnAddServerCommand("scrim_status", print_status);
     g_engfuncs.pfnAddServerCommand("scrim_add", add_eligible_player);
@@ -545,6 +603,7 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS* function_table,
     g_engfuncs.pfnAddServerCommand("scrim_captain_b", select_captain_b);
     g_engfuncs.pfnAddServerCommand("scrim_captain_clear", clear_captain);
     g_engfuncs.pfnAddServerCommand("scrim_captains_confirm", confirm_captains);
+    g_engfuncs.pfnAddServerCommand("scrim_knife_start", start_knife_round);
     const cvar_t* registered_cvar = g_engfuncs.pfnCVarGetPointer(g_scrim_enabled.name);
     apply_enabled_value(registered_cvar != nullptr ? registered_cvar->string
                                                    : g_scrim_enabled.string);
@@ -570,6 +629,7 @@ C_DLLEXPORT int Meta_Detach(PLUG_LOADTIME now, PL_UNLOAD_REASON reason) {
     }
 
     scrimmod::plugin::remove_cvar_listener(g_scrim_enabled.name, apply_enabled_value);
+    scrimmod::plugin::remove_gameplay_hooks();
     apply_effects(g_match_engine.set_enabled(false).effects);
     scrimmod::plugin::shutdown_server_apis();
     server_print("[ScrimMod] Plugin unloaded.\n");
