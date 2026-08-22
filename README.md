@@ -182,6 +182,25 @@ An administrator can resolve an exceptional result from `KnifeSetup` or `KnifeLi
 with `scrim_knife_winner <player ID or exact name>`; the target must be one of the
 selected captains.
 
+After the knife result, record and confirm the winner's choice from the server
+console or RCON. Then record and confirm the starting side chosen by whichever
+captain owns that decision:
+
+```text
+scrim_knife_choice side
+scrim_knife_choice_confirm
+scrim_starting_side ct
+scrim_starting_side_confirm
+```
+
+Use `pick` instead of `side` when the knife winner wants the first draft pick, and
+use `t` instead of `ct` for the starting-side choice. Changing the pending knife
+reward before confirmation invalidates any dependent decision. Confirmation stores
+the first picker and both logical teams' regulation starting sides explicitly,
+moves the captains to those sides, keeps everyone else spectating, and advances to
+`Draft`. `scrim_status` shows pending and confirmed decisions. Team changes remain
+locked for tracked players throughout this checkpoint and Draft.
+
 ### Bot end-to-end testing
 
 Bots are excluded by default. Before enabling a scrim, opt them into tracking and the

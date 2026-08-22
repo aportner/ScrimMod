@@ -17,9 +17,11 @@ void require(const bool condition, const char* message) {
 
 int main() {
     using scrimmod::core::CaptainSelectionError;
+    using scrimmod::core::DecisionError;
     using scrimmod::core::EffectType;
     using scrimmod::core::EligibilityError;
     using scrimmod::core::KnifeKillOutcome;
+    using scrimmod::core::KnifeRewardChoice;
     using scrimmod::core::MatchEngine;
     using scrimmod::core::Phase;
     using scrimmod::core::PlayerType;
@@ -278,6 +280,86 @@ int main() {
             "knife loser is stored by player ID");
     require(!engine.knife_round_ended(false).changed,
             "round end after recorded winner does not invalidate result");
+    require(!engine.can_player_choose_team("STEAM_0:0:20"),
+            "team choices remain locked after the knife result");
+    require(engine.confirm_knife_reward().error == DecisionError::WrongPhase,
+            "knife reward cannot be confirmed before entering its decision phase");
+    require(engine.transition_to(Phase::Draft).error == TransitionError::IllegalTransition,
+            "knife complete cannot skip the side-or-pick checkpoint");
+
+    const auto pending_side_reward = engine.choose_knife_reward(KnifeRewardChoice::StartingSide);
+    require(pending_side_reward.ok() && pending_side_reward.changed,
+            "knife winner can make a pending reward choice");
+    require(engine.state().phase() == Phase::SideOrPick,
+            "first reward choice enters the side-or-pick phase centrally");
+    require(engine.state().pending_knife_reward_choice() == KnifeRewardChoice::StartingSide,
+            "pending starting-side reward is stored explicitly");
+    require(engine.choose_starting_side(scrimmod::core::Side::CounterTerrorist).error ==
+                DecisionError::RewardNotConfirmed,
+            "starting side cannot be selected before reward confirmation");
+    require(engine.confirm_starting_side().error == DecisionError::RewardNotConfirmed,
+            "starting side cannot be confirmed before reward confirmation");
+    require(engine.transition_to(Phase::Draft).error == TransitionError::PrerequisiteNotMet,
+            "generic transition cannot bypass side-or-pick decisions");
+
+    const auto pending_first_pick = engine.choose_knife_reward(KnifeRewardChoice::FirstPick);
+    require(pending_first_pick.ok() && pending_first_pick.changed,
+            "pending reward may be changed before confirmation");
+    require(!engine.state().first_picker_player_id().has_value(),
+            "changing a pending reward clears dependent first-picker state");
+    const auto confirmed_reward = engine.confirm_knife_reward();
+    require(confirmed_reward.ok() && confirmed_reward.changed,
+            "pending knife reward requires explicit confirmation");
+    require(engine.state().confirmed_knife_reward_choice() == KnifeRewardChoice::FirstPick,
+            "confirmed first-pick reward is stored explicitly");
+    require(engine.state().first_picker_player_id() == "STEAM_0:0:20",
+            "knife winner receives first pick when that reward is chosen");
+    require(engine.state().side_chooser_player_id() == "STEAM_0:1:10",
+            "knife loser receives the remaining starting-side decision");
+    const auto same_confirmed_reward = engine.choose_knife_reward(KnifeRewardChoice::FirstPick);
+    require(same_confirmed_reward.ok() && !same_confirmed_reward.changed,
+            "repeating the confirmed reward choice is idempotent");
+    const auto confirmed_reward_again = engine.confirm_knife_reward();
+    require(confirmed_reward_again.ok() && !confirmed_reward_again.changed,
+            "reward confirmation is idempotent");
+
+    const auto pending_starting_side =
+        engine.choose_starting_side(scrimmod::core::Side::CounterTerrorist);
+    require(pending_starting_side.ok() && pending_starting_side.changed,
+            "side chooser can make a pending starting-side choice");
+    require(engine.state().pending_starting_side() == scrimmod::core::Side::CounterTerrorist,
+            "pending regulation side is stored for confirmation");
+    const auto starting_side = engine.confirm_starting_side();
+    require(starting_side.ok() && starting_side.changed,
+            "starting-side confirmation completes the decision checkpoint");
+    require(engine.state().phase() == Phase::Draft,
+            "confirmed starting side advances centrally into Draft");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).starting_side ==
+                scrimmod::core::Side::CounterTerrorist,
+            "side chooser's logical team explicitly stores its regulation starting side");
+    require(engine.state().team(scrimmod::core::LogicalTeam::B).starting_side ==
+                scrimmod::core::Side::Terrorist,
+            "other logical team explicitly stores the opposite regulation starting side");
+    const auto has_draft_assignment = [&starting_side](
+                                          const std::string& player_id,
+                                          const scrimmod::core::PlayerDestination destination) {
+        return std::any_of(
+            starting_side.effects.begin(), starting_side.effects.end(), [&](const auto& effect) {
+                return effect.type == EffectType::AssignPlayerTeam &&
+                       effect.player_id == player_id && effect.destination == destination;
+            });
+    };
+    require(
+        has_draft_assignment("STEAM_0:1:10", scrimmod::core::PlayerDestination::CounterTerrorist),
+        "Team A captain is moved to the confirmed regulation side");
+    require(has_draft_assignment("STEAM_0:0:20", scrimmod::core::PlayerDestination::Terrorist),
+            "Team B captain is moved to the opposite regulation side");
+    require(has_draft_assignment("STEAM_0:0:30", scrimmod::core::PlayerDestination::Spectator),
+            "undrafted player remains spectator on Draft entry");
+    require(!engine.can_player_choose_team("STEAM_0:0:30"),
+            "tracked players cannot bypass authoritative Draft placement");
+    require(engine.reconciliation_effects().size() == starting_side.effects.size(),
+            "Draft entry placement can be reconciled idempotently");
 
     const auto disabled = engine.set_enabled(false);
     require(disabled.ok() && disabled.changed, "disabling active engine changes state");
@@ -286,6 +368,12 @@ int main() {
     require(engine.state().players().empty(), "disable clears tracked players");
     require(!engine.state().eligible_pool_captured(), "disable clears eligible capture state");
     require(engine.state().eligible_players().empty(), "disable clears eligible players");
+    require(!engine.state().first_picker_player_id().has_value(),
+            "disable clears first-picker decision state");
+    require(!engine.state().side_chooser_player_id().has_value(),
+            "disable clears side-chooser decision state");
+    require(!engine.state().team(scrimmod::core::LogicalTeam::A).starting_side.has_value(),
+            "disable clears regulation starting sides");
     require(engine.can_player_choose_team("STEAM_0:1:10"),
             "disable removes team-choice restrictions");
     require(engine.can_player_acquire_weapon("STEAM_0:1:10", false),
@@ -326,6 +414,13 @@ int main() {
             "admin can resolve disconnected bot captain from knife setup");
     require(bot_engine.state().phase() == Phase::KnifeComplete,
             "forced knife winner enters knife complete through central transition");
+    require(bot_engine.choose_knife_reward(KnifeRewardChoice::StartingSide).ok(),
+            "knife winner can choose the starting-side reward");
+    require(bot_engine.confirm_knife_reward().ok(), "starting-side reward can be confirmed");
+    require(bot_engine.state().side_chooser_player_id() == "STEAM_0:1:77",
+            "knife winner becomes side chooser for the starting-side reward");
+    require(bot_engine.state().first_picker_player_id() == "BOT:42",
+            "knife loser receives first pick for the starting-side reward");
 
     std::cout << "All ScrimMod engine tests passed\n";
     return EXIT_SUCCESS;

@@ -51,6 +51,12 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
         result.error = TransitionError::PrerequisiteNotMet;
         return result;
     }
+    if (state_.phase_ == Phase::SideOrPick && target == Phase::Draft &&
+        (!state_.first_picker_player_id_.has_value() || !state_.team_a_.starting_side.has_value() ||
+         !state_.team_b_.starting_side.has_value())) {
+        result.error = TransitionError::PrerequisiteNotMet;
+        return result;
+    }
 
     state_.phase_ = target;
     if (target == Phase::KnifeSetup) {
@@ -329,13 +335,15 @@ std::vector<Effect> MatchEngine::reconciliation_effects() const {
     TransitionResult result{};
     if (is_knife_phase()) {
         append_knife_reconciliation_effects(result);
+    } else if (state_.phase_ == Phase::Draft) {
+        append_draft_reconciliation_effects(result.effects);
     }
     return result.effects;
 }
 
 bool MatchEngine::can_player_choose_team(std::string player_id) const {
     player_id = normalize_player_id(std::move(player_id));
-    return !is_knife_phase() || state_.players_.find(player_id) == state_.players_.end();
+    return !are_team_changes_locked() || state_.players_.find(player_id) == state_.players_.end();
 }
 
 bool MatchEngine::can_player_acquire_weapon(std::string player_id, const bool is_knife) const {
@@ -419,6 +427,136 @@ TransitionResult MatchEngine::knife_round_ended(const bool generated_restart) {
     return require_knife_replay();
 }
 
+DecisionResult MatchEngine::choose_knife_reward(const KnifeRewardChoice choice) {
+    DecisionResult result{};
+    if (!state_.enabled_) {
+        result.error = DecisionError::ScrimDisabled;
+        return result;
+    }
+    if (state_.phase_ == Phase::KnifeComplete) {
+        const auto transition = transition_to(Phase::SideOrPick);
+        if (!transition.ok()) {
+            result.error = DecisionError::WrongPhase;
+            return result;
+        }
+        result.changed = transition.changed;
+    } else if (state_.phase_ != Phase::SideOrPick) {
+        result.error = DecisionError::WrongPhase;
+        return result;
+    }
+
+    if (state_.pending_knife_reward_choice_ != choice) {
+        state_.pending_knife_reward_choice_ = choice;
+        state_.confirmed_knife_reward_choice_.reset();
+        state_.first_picker_player_id_.reset();
+        state_.side_chooser_player_id_.reset();
+        state_.pending_starting_side_.reset();
+        state_.team_a_.starting_side.reset();
+        state_.team_b_.starting_side.reset();
+        result.changed = true;
+    }
+    return result;
+}
+
+DecisionResult MatchEngine::confirm_knife_reward() {
+    DecisionResult result{};
+    if (!state_.enabled_) {
+        result.error = DecisionError::ScrimDisabled;
+        return result;
+    }
+    if (state_.phase_ != Phase::SideOrPick) {
+        result.error = DecisionError::WrongPhase;
+        return result;
+    }
+    if (!state_.pending_knife_reward_choice_.has_value()) {
+        result.error = DecisionError::ChoiceNotSelected;
+        return result;
+    }
+    if (state_.confirmed_knife_reward_choice_ == state_.pending_knife_reward_choice_ &&
+        state_.first_picker_player_id_.has_value() && state_.side_chooser_player_id_.has_value()) {
+        return result;
+    }
+
+    state_.confirmed_knife_reward_choice_ = state_.pending_knife_reward_choice_;
+    if (*state_.confirmed_knife_reward_choice_ == KnifeRewardChoice::StartingSide) {
+        state_.side_chooser_player_id_ = state_.knife_winner_player_id_;
+        state_.first_picker_player_id_ = state_.knife_loser_player_id_;
+    } else {
+        state_.first_picker_player_id_ = state_.knife_winner_player_id_;
+        state_.side_chooser_player_id_ = state_.knife_loser_player_id_;
+    }
+    state_.pending_starting_side_.reset();
+    result.changed = true;
+    return result;
+}
+
+DecisionResult MatchEngine::choose_starting_side(const Side side) {
+    DecisionResult result{};
+    if (!state_.enabled_) {
+        result.error = DecisionError::ScrimDisabled;
+        return result;
+    }
+    if (state_.phase_ != Phase::SideOrPick) {
+        result.error = DecisionError::WrongPhase;
+        return result;
+    }
+    if (!state_.confirmed_knife_reward_choice_.has_value() ||
+        !state_.side_chooser_player_id_.has_value()) {
+        result.error = DecisionError::RewardNotConfirmed;
+        return result;
+    }
+    if (state_.pending_starting_side_ != side) {
+        state_.pending_starting_side_ = side;
+        result.changed = true;
+    }
+    return result;
+}
+
+DecisionResult MatchEngine::confirm_starting_side() {
+    DecisionResult result{};
+    if (!state_.enabled_) {
+        result.error = DecisionError::ScrimDisabled;
+        return result;
+    }
+    if (state_.phase_ != Phase::SideOrPick) {
+        result.error = DecisionError::WrongPhase;
+        return result;
+    }
+    if (!state_.confirmed_knife_reward_choice_.has_value() ||
+        !state_.side_chooser_player_id_.has_value()) {
+        result.error = DecisionError::RewardNotConfirmed;
+        return result;
+    }
+    if (!state_.pending_starting_side_.has_value()) {
+        result.error = DecisionError::ChoiceNotSelected;
+        return result;
+    }
+
+    const auto player = state_.players_.find(*state_.side_chooser_player_id_);
+    if (player == state_.players_.end() || !player->second.logical_team.has_value()) {
+        result.error = DecisionError::UnknownPlayer;
+        return result;
+    }
+    const LogicalTeam chooser_team = *player->second.logical_team;
+    const Side chosen_side = *state_.pending_starting_side_;
+    const Side other_side =
+        chosen_side == Side::Terrorist ? Side::CounterTerrorist : Side::Terrorist;
+    mutable_team(chooser_team).starting_side = chosen_side;
+    mutable_team(chooser_team).current_side = chosen_side;
+    const LogicalTeam other_team = chooser_team == LogicalTeam::A ? LogicalTeam::B : LogicalTeam::A;
+    mutable_team(other_team).starting_side = other_side;
+    mutable_team(other_team).current_side = other_side;
+
+    const auto transition = transition_to(Phase::Draft);
+    if (!transition.ok()) {
+        result.error = DecisionError::RewardNotConfirmed;
+        return result;
+    }
+    result.changed = true;
+    append_draft_reconciliation_effects(result.effects);
+    return result;
+}
+
 TeamState& MatchEngine::mutable_team(const LogicalTeam team) noexcept {
     return team == LogicalTeam::A ? state_.team_a_ : state_.team_b_;
 }
@@ -464,8 +602,38 @@ void MatchEngine::append_knife_reconciliation_effects(TransitionResult& result) 
     }
 }
 
+void MatchEngine::append_draft_reconciliation_effects(std::vector<Effect>& effects) const {
+    std::vector<std::string> connected_player_ids;
+    connected_player_ids.reserve(state_.players_.size());
+    for (const auto& [player_id, player] : state_.players_) {
+        if (player.connected) {
+            connected_player_ids.push_back(player_id);
+        }
+    }
+    std::sort(connected_player_ids.begin(), connected_player_ids.end());
+
+    for (const auto& player_id : connected_player_ids) {
+        PlayerDestination destination = PlayerDestination::Spectator;
+        if (state_.team_a_.captain_player_id == player_id) {
+            destination = *state_.team_a_.starting_side == Side::Terrorist
+                              ? PlayerDestination::Terrorist
+                              : PlayerDestination::CounterTerrorist;
+        } else if (state_.team_b_.captain_player_id == player_id) {
+            destination = *state_.team_b_.starting_side == Side::Terrorist
+                              ? PlayerDestination::Terrorist
+                              : PlayerDestination::CounterTerrorist;
+        }
+        effects.push_back({EffectType::AssignPlayerTeam, player_id, destination});
+    }
+}
+
 bool MatchEngine::is_knife_phase() const noexcept {
     return state_.phase_ == Phase::KnifeSetup || state_.phase_ == Phase::KnifeLive;
+}
+
+bool MatchEngine::are_team_changes_locked() const noexcept {
+    return is_knife_phase() || state_.phase_ == Phase::KnifeComplete ||
+           state_.phase_ == Phase::SideOrPick || state_.phase_ == Phase::Draft;
 }
 
 TransitionResult MatchEngine::require_knife_replay() {

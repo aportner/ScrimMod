@@ -31,6 +31,7 @@ enum class Phase : std::uint8_t {
 enum class LogicalTeam : std::uint8_t { A, B };
 enum class Side : std::uint8_t { Terrorist, CounterTerrorist };
 enum class PlayerType : std::uint8_t { Human, Bot };
+enum class KnifeRewardChoice : std::uint8_t { StartingSide, FirstPick };
 
 [[nodiscard]] const char* phase_name(Phase phase) noexcept;
 
@@ -48,6 +49,7 @@ struct TeamState {
     int total_score{0};
     int period_score{0};
     std::optional<Side> current_side;
+    std::optional<Side> starting_side;
     bool captain_ready{false};
 };
 
@@ -61,6 +63,13 @@ class MatchState final {
     [[nodiscard]] const std::vector<std::string>& eligible_players() const noexcept;
     [[nodiscard]] const std::optional<std::string>& knife_winner_player_id() const noexcept;
     [[nodiscard]] const std::optional<std::string>& knife_loser_player_id() const noexcept;
+    [[nodiscard]] const std::optional<KnifeRewardChoice>&
+    pending_knife_reward_choice() const noexcept;
+    [[nodiscard]] const std::optional<KnifeRewardChoice>&
+    confirmed_knife_reward_choice() const noexcept;
+    [[nodiscard]] const std::optional<std::string>& first_picker_player_id() const noexcept;
+    [[nodiscard]] const std::optional<std::string>& side_chooser_player_id() const noexcept;
+    [[nodiscard]] const std::optional<Side>& pending_starting_side() const noexcept;
 
   private:
     friend class MatchEngine;
@@ -76,6 +85,11 @@ class MatchState final {
     std::vector<std::string> eligible_players_{};
     std::optional<std::string> knife_winner_player_id_{};
     std::optional<std::string> knife_loser_player_id_{};
+    std::optional<KnifeRewardChoice> pending_knife_reward_choice_{};
+    std::optional<KnifeRewardChoice> confirmed_knife_reward_choice_{};
+    std::optional<std::string> first_picker_player_id_{};
+    std::optional<std::string> side_chooser_player_id_{};
+    std::optional<Side> pending_starting_side_{};
 };
 
 } // namespace scrimmod::core

@@ -338,6 +338,42 @@ void print_status() {
                       state.knife_loser_player_id()->c_str());
         server_print(status);
     }
+    if (state.pending_knife_reward_choice().has_value()) {
+        const char* pending_reward =
+            *state.pending_knife_reward_choice() == scrimmod::core::KnifeRewardChoice::StartingSide
+                ? "starting side"
+                : "first pick";
+        std::snprintf(status, sizeof(status), "Knife Reward Choice: %s%s\n", pending_reward,
+                      state.confirmed_knife_reward_choice().has_value() ? " (confirmed)"
+                                                                        : " (pending)");
+        server_print(status);
+    }
+    if (state.first_picker_player_id().has_value()) {
+        std::snprintf(status, sizeof(status), "First Picker: %s\nSide Chooser: %s\n",
+                      state.first_picker_player_id()->c_str(),
+                      state.side_chooser_player_id()->c_str());
+        server_print(status);
+    }
+    if (state.pending_starting_side().has_value()) {
+        std::snprintf(status, sizeof(status), "Pending Starting Side: %s\n",
+                      *state.pending_starting_side() == scrimmod::core::Side::Terrorist ? "T"
+                                                                                        : "CT");
+        server_print(status);
+    }
+    if (state.team(scrimmod::core::LogicalTeam::A).starting_side.has_value()) {
+        const char* team_a_side = *state.team(scrimmod::core::LogicalTeam::A).starting_side ==
+                                          scrimmod::core::Side::Terrorist
+                                      ? "T"
+                                      : "CT";
+        const char* team_b_side = *state.team(scrimmod::core::LogicalTeam::B).starting_side ==
+                                          scrimmod::core::Side::Terrorist
+                                      ? "T"
+                                      : "CT";
+        std::snprintf(status, sizeof(status),
+                      "Regulation Starting Sides: Team A -> %s, Team B -> %s\n", team_a_side,
+                      team_b_side);
+        server_print(status);
+    }
 }
 
 const char* eligibility_error_message(const scrimmod::core::EligibilityError error) {
@@ -592,6 +628,86 @@ void force_knife_winner() {
     server_print("[ScrimMod] Admin set the knife winner; entered KnifeComplete.\n");
 }
 
+void choose_knife_reward() {
+    if (g_engfuncs.pfnCmd_Argc() != 2) {
+        server_print("Usage: scrim_knife_choice <side|pick>\n");
+        return;
+    }
+    const char* choice = g_engfuncs.pfnCmd_Argv(1);
+    scrimmod::core::KnifeRewardChoice reward;
+    if (choice != nullptr && std::strcmp(choice, "side") == 0) {
+        reward = scrimmod::core::KnifeRewardChoice::StartingSide;
+    } else if (choice != nullptr && std::strcmp(choice, "pick") == 0) {
+        reward = scrimmod::core::KnifeRewardChoice::FirstPick;
+    } else {
+        server_print("Usage: scrim_knife_choice <side|pick>\n");
+        return;
+    }
+
+    const auto result = g_match_engine.choose_knife_reward(reward);
+    if (!result.ok()) {
+        server_print("[ScrimMod] Knife reward can only be chosen after a knife winner exists.\n");
+        return;
+    }
+    server_print(reward == scrimmod::core::KnifeRewardChoice::StartingSide
+                     ? "[ScrimMod] Pending choice: starting side. Confirm it explicitly.\n"
+                     : "[ScrimMod] Pending choice: first draft pick. Confirm it explicitly.\n");
+}
+
+void confirm_knife_reward() {
+    if (g_engfuncs.pfnCmd_Argc() != 1) {
+        server_print("Usage: scrim_knife_choice_confirm\n");
+        return;
+    }
+    const auto result = g_match_engine.confirm_knife_reward();
+    if (!result.ok()) {
+        server_print("[ScrimMod] Select a knife reward before confirming it.\n");
+        return;
+    }
+    server_print("[ScrimMod] Knife reward confirmed; the other captain must choose a starting side "
+                 "as applicable.\n");
+}
+
+void choose_starting_side() {
+    if (g_engfuncs.pfnCmd_Argc() != 2) {
+        server_print("Usage: scrim_starting_side <ct|t>\n");
+        return;
+    }
+    const char* choice = g_engfuncs.pfnCmd_Argv(1);
+    scrimmod::core::Side side;
+    if (choice != nullptr && std::strcmp(choice, "ct") == 0) {
+        side = scrimmod::core::Side::CounterTerrorist;
+    } else if (choice != nullptr && std::strcmp(choice, "t") == 0) {
+        side = scrimmod::core::Side::Terrorist;
+    } else {
+        server_print("Usage: scrim_starting_side <ct|t>\n");
+        return;
+    }
+
+    const auto result = g_match_engine.choose_starting_side(side);
+    if (!result.ok()) {
+        server_print("[ScrimMod] Confirm the knife reward before choosing a starting side.\n");
+        return;
+    }
+    server_print(side == scrimmod::core::Side::CounterTerrorist
+                     ? "[ScrimMod] Pending starting side: CT. Confirm it explicitly.\n"
+                     : "[ScrimMod] Pending starting side: T. Confirm it explicitly.\n");
+}
+
+void confirm_starting_side() {
+    if (g_engfuncs.pfnCmd_Argc() != 1) {
+        server_print("Usage: scrim_starting_side_confirm\n");
+        return;
+    }
+    const auto result = g_match_engine.confirm_starting_side();
+    if (!result.ok()) {
+        server_print("[ScrimMod] Select a starting side before confirming it.\n");
+        return;
+    }
+    apply_effects(result.effects);
+    server_print("[ScrimMod] Starting side confirmed; captains placed and Draft entered.\n");
+}
+
 } // namespace
 
 C_DLLEXPORT void WINAPI GiveFnptrsToDll(enginefuncs_t* engine_functions, globalvars_t* globals) {
@@ -673,6 +789,10 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS* function_table,
     g_engfuncs.pfnAddServerCommand("scrim_captains_confirm", confirm_captains);
     g_engfuncs.pfnAddServerCommand("scrim_knife_start", start_knife_round);
     g_engfuncs.pfnAddServerCommand("scrim_knife_winner", force_knife_winner);
+    g_engfuncs.pfnAddServerCommand("scrim_knife_choice", choose_knife_reward);
+    g_engfuncs.pfnAddServerCommand("scrim_knife_choice_confirm", confirm_knife_reward);
+    g_engfuncs.pfnAddServerCommand("scrim_starting_side", choose_starting_side);
+    g_engfuncs.pfnAddServerCommand("scrim_starting_side_confirm", confirm_starting_side);
     const cvar_t* registered_cvar = g_engfuncs.pfnCVarGetPointer(g_scrim_enabled.name);
     apply_enabled_value(registered_cvar != nullptr ? registered_cvar->string
                                                    : g_scrim_enabled.string);

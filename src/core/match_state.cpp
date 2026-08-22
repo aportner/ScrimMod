@@ -64,6 +64,26 @@ const std::optional<std::string>& MatchState::knife_loser_player_id() const noex
     return knife_loser_player_id_;
 }
 
+const std::optional<KnifeRewardChoice>& MatchState::pending_knife_reward_choice() const noexcept {
+    return pending_knife_reward_choice_;
+}
+
+const std::optional<KnifeRewardChoice>& MatchState::confirmed_knife_reward_choice() const noexcept {
+    return confirmed_knife_reward_choice_;
+}
+
+const std::optional<std::string>& MatchState::first_picker_player_id() const noexcept {
+    return first_picker_player_id_;
+}
+
+const std::optional<std::string>& MatchState::side_chooser_player_id() const noexcept {
+    return side_chooser_player_id_;
+}
+
+const std::optional<Side>& MatchState::pending_starting_side() const noexcept {
+    return pending_starting_side_;
+}
+
 void MatchState::reset() noexcept {
     enabled_ = false;
     phase_ = Phase::Disabled;
@@ -74,6 +94,11 @@ void MatchState::reset() noexcept {
     eligible_players_.clear();
     knife_winner_player_id_.reset();
     knife_loser_player_id_.reset();
+    pending_knife_reward_choice_.reset();
+    confirmed_knife_reward_choice_.reset();
+    first_picker_player_id_.reset();
+    side_chooser_player_id_.reset();
+    pending_starting_side_.reset();
 }
 
 } // namespace scrimmod::core
