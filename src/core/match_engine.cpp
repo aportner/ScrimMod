@@ -39,8 +39,17 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
         result.error = TransitionError::IllegalTransition;
         return result;
     }
+    if (state_.phase_ == Phase::CaptainSelection && target == Phase::KnifeSetup &&
+        (!state_.team_a_.captain_steam_id.has_value() ||
+         !state_.team_b_.captain_steam_id.has_value())) {
+        result.error = TransitionError::PrerequisiteNotMet;
+        return result;
+    }
 
     state_.phase_ = target;
+    if (target == Phase::KnifeSetup) {
+        commit_captains();
+    }
     result.changed = true;
     return result;
 }
@@ -193,9 +202,91 @@ EligibilityResult MatchEngine::remove_eligible_player(std::string steam_id) {
                                            state_.eligible_players_.end(), steam_id);
     if (position != state_.eligible_players_.end() && *position == steam_id) {
         state_.eligible_players_.erase(position);
+        if (state_.team_a_.captain_steam_id == steam_id) {
+            state_.team_a_.captain_steam_id.reset();
+        }
+        if (state_.team_b_.captain_steam_id == steam_id) {
+            state_.team_b_.captain_steam_id.reset();
+        }
         result.changed = true;
     }
     return result;
+}
+
+CaptainSelectionResult MatchEngine::select_captain(const LogicalTeam team, std::string steam_id) {
+    CaptainSelectionResult result{};
+    if (!state_.enabled_) {
+        result.error = CaptainSelectionError::ScrimDisabled;
+        return result;
+    }
+    if (state_.phase_ != Phase::CaptainSelection) {
+        result.error = CaptainSelectionError::WrongPhase;
+        return result;
+    }
+    if (!state_.eligible_pool_captured_) {
+        result.error = CaptainSelectionError::PoolNotCaptured;
+        return result;
+    }
+
+    steam_id = normalize_steam_id(std::move(steam_id));
+    if (steam_id.empty()) {
+        result.error = CaptainSelectionError::InvalidSteamId;
+        return result;
+    }
+    if (state_.players_.find(steam_id) == state_.players_.end()) {
+        result.error = CaptainSelectionError::UnknownPlayer;
+        return result;
+    }
+    if (!std::binary_search(state_.eligible_players_.begin(), state_.eligible_players_.end(),
+                            steam_id)) {
+        result.error = CaptainSelectionError::IneligiblePlayer;
+        return result;
+    }
+
+    const LogicalTeam other_team = team == LogicalTeam::A ? LogicalTeam::B : LogicalTeam::A;
+    if (state_.team(other_team).captain_steam_id == steam_id) {
+        result.error = CaptainSelectionError::DuplicateCaptain;
+        return result;
+    }
+
+    auto& captain = mutable_team(team).captain_steam_id;
+    if (captain != steam_id) {
+        captain = std::move(steam_id);
+        result.changed = true;
+    }
+    return result;
+}
+
+CaptainSelectionResult MatchEngine::clear_captain(const LogicalTeam team) {
+    CaptainSelectionResult result{};
+    if (!state_.enabled_) {
+        result.error = CaptainSelectionError::ScrimDisabled;
+        return result;
+    }
+    if (state_.phase_ != Phase::CaptainSelection) {
+        result.error = CaptainSelectionError::WrongPhase;
+        return result;
+    }
+
+    auto& captain = mutable_team(team).captain_steam_id;
+    if (captain.has_value()) {
+        captain.reset();
+        result.changed = true;
+    }
+    return result;
+}
+
+TeamState& MatchEngine::mutable_team(const LogicalTeam team) noexcept {
+    return team == LogicalTeam::A ? state_.team_a_ : state_.team_b_;
+}
+
+void MatchEngine::commit_captains() {
+    const std::string& captain_a = *state_.team_a_.captain_steam_id;
+    const std::string& captain_b = *state_.team_b_.captain_steam_id;
+    state_.team_a_.roster = {captain_a};
+    state_.team_b_.roster = {captain_b};
+    state_.players_.at(captain_a).logical_team = LogicalTeam::A;
+    state_.players_.at(captain_b).logical_team = LogicalTeam::B;
 }
 
 bool MatchEngine::is_legal_transition(const Phase from, const Phase to) noexcept {

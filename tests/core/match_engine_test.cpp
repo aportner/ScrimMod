@@ -15,6 +15,7 @@ void require(const bool condition, const char* message) {
 } // namespace
 
 int main() {
+    using scrimmod::core::CaptainSelectionError;
     using scrimmod::core::EffectType;
     using scrimmod::core::EligibilityError;
     using scrimmod::core::MatchEngine;
@@ -29,6 +30,9 @@ int main() {
     require(engine.player_connected("STEAM_0:1:10", "player").error ==
                 PlayerUpdateError::ScrimDisabled,
             "disabled engine rejects player updates");
+    require(engine.select_captain(scrimmod::core::LogicalTeam::A, "STEAM_0:1:10").error ==
+                CaptainSelectionError::ScrimDisabled,
+            "disabled engine rejects captain selection");
 
     const auto enabled = engine.set_enabled(true);
     require(enabled.ok() && enabled.changed, "enabling succeeds and changes state");
@@ -89,6 +93,46 @@ int main() {
     require(engine.add_eligible_player("STEAM_0:1:999").error == EligibilityError::UnknownPlayer,
             "unknown player cannot be made eligible");
 
+    require(engine.select_captain(scrimmod::core::LogicalTeam::A, "STEAM_0:1:10").error ==
+                CaptainSelectionError::IneligiblePlayer,
+            "removed player cannot be selected as a captain");
+    require(engine.add_eligible_player("STEAM_0:1:10").ok(),
+            "removed player can be restored to eligibility explicitly");
+
+    const auto captain_a = engine.select_captain(scrimmod::core::LogicalTeam::A, "steam_0:1:10");
+    require(captain_a.ok() && captain_a.changed, "eligible player can be selected for Team A");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).captain_steam_id == "STEAM_0:1:10",
+            "Team A captain is stored by normalized Steam ID");
+    const auto captain_a_again =
+        engine.select_captain(scrimmod::core::LogicalTeam::A, "STEAM_0:1:10");
+    require(captain_a_again.ok() && !captain_a_again.changed,
+            "selecting the same captain is idempotent");
+    require(engine.select_captain(scrimmod::core::LogicalTeam::B, "STEAM_0:1:999").error ==
+                CaptainSelectionError::UnknownPlayer,
+            "unknown player cannot be selected as captain");
+    require(engine.select_captain(scrimmod::core::LogicalTeam::B, "STEAM_0:1:10").error ==
+                CaptainSelectionError::DuplicateCaptain,
+            "same player cannot captain both teams");
+
+    const auto captain_b = engine.select_captain(scrimmod::core::LogicalTeam::B, "STEAM_0:0:20");
+    require(captain_b.ok() && captain_b.changed, "eligible player can be selected for Team B");
+    const auto clear_captain_b = engine.clear_captain(scrimmod::core::LogicalTeam::B);
+    require(clear_captain_b.ok() && clear_captain_b.changed,
+            "pending captain selection can be cleared");
+    require(!engine.state().team(scrimmod::core::LogicalTeam::B).captain_steam_id.has_value(),
+            "cleared captain is removed from pending state");
+    require(engine.select_captain(scrimmod::core::LogicalTeam::B, "STEAM_0:0:20").ok(),
+            "cleared captain can be selected again");
+
+    require(engine.remove_eligible_player("STEAM_0:0:20").changed,
+            "selected captain can be removed from eligibility");
+    require(!engine.state().team(scrimmod::core::LogicalTeam::B).captain_steam_id.has_value(),
+            "removing eligibility invalidates dependent captain selection");
+    require(engine.add_eligible_player("STEAM_0:0:20").ok(),
+            "removed captain can be restored to eligibility");
+    require(engine.select_captain(scrimmod::core::LogicalTeam::B, "STEAM_0:0:20").ok(),
+            "restored eligible player can be selected again");
+
     const auto disconnected = engine.player_disconnected("steam_0:1:10");
     require(disconnected.ok() && disconnected.changed, "disconnect marks known player");
     require(!engine.state().players().at("STEAM_0:1:10").connected,
@@ -106,11 +150,36 @@ int main() {
     require(engine.state().phase() == Phase::CaptainSelection,
             "illegal transition leaves phase unchanged");
 
+    const auto clear_captain_b_again = engine.clear_captain(scrimmod::core::LogicalTeam::B);
+    require(clear_captain_b_again.ok() && clear_captain_b_again.changed,
+            "captain can be cleared before confirmation");
+    const auto incomplete_captains = engine.transition_to(Phase::KnifeSetup);
+    require(incomplete_captains.error == TransitionError::PrerequisiteNotMet,
+            "knife setup requires two selected captains");
+    require(engine.state().phase() == Phase::CaptainSelection,
+            "failed captain confirmation leaves phase unchanged");
+    require(engine.select_captain(scrimmod::core::LogicalTeam::B, "STEAM_0:0:20").ok(),
+            "second captain can be restored before confirmation");
+
     const auto knife_setup = engine.transition_to(Phase::KnifeSetup);
-    require(knife_setup.ok() && knife_setup.changed, "legal transition succeeds");
-    require(engine.state().phase() == Phase::KnifeSetup, "legal transition updates phase");
+    require(knife_setup.ok() && knife_setup.changed, "captain confirmation enters knife setup");
+    require(engine.state().phase() == Phase::KnifeSetup,
+            "captain confirmation updates the central phase");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).roster.front() == "STEAM_0:1:10",
+            "confirmed Team A captain begins Team A roster");
+    require(engine.state().team(scrimmod::core::LogicalTeam::B).roster.front() == "STEAM_0:0:20",
+            "confirmed Team B captain begins Team B roster");
+    require(engine.state().players().at("STEAM_0:1:10").logical_team ==
+                scrimmod::core::LogicalTeam::A,
+            "confirmed Team A captain receives authoritative logical team");
+    require(engine.state().players().at("STEAM_0:0:20").logical_team ==
+                scrimmod::core::LogicalTeam::B,
+            "confirmed Team B captain receives authoritative logical team");
     require(engine.add_eligible_player("STEAM_0:1:10").error == EligibilityError::WrongPhase,
             "eligible roster cannot be changed after captain selection");
+    require(engine.clear_captain(scrimmod::core::LogicalTeam::A).error ==
+                CaptainSelectionError::WrongPhase,
+            "confirmed captains cannot be changed outside captain selection");
 
     const auto same_phase = engine.transition_to(Phase::KnifeSetup);
     require(same_phase.ok() && !same_phase.changed, "same-phase transition is idempotent");

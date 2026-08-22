@@ -20,6 +20,7 @@ enum class TransitionError : std::uint8_t {
     None,
     ScrimDisabled,
     IllegalTransition,
+    PrerequisiteNotMet,
 };
 
 struct TransitionResult {
@@ -60,6 +61,24 @@ struct EligibilityResult {
     [[nodiscard]] bool ok() const noexcept { return error == EligibilityError::None; }
 };
 
+enum class CaptainSelectionError : std::uint8_t {
+    None,
+    ScrimDisabled,
+    WrongPhase,
+    PoolNotCaptured,
+    InvalidSteamId,
+    UnknownPlayer,
+    IneligiblePlayer,
+    DuplicateCaptain,
+};
+
+struct CaptainSelectionResult {
+    CaptainSelectionError error{CaptainSelectionError::None};
+    bool changed{false};
+
+    [[nodiscard]] bool ok() const noexcept { return error == CaptainSelectionError::None; }
+};
+
 class MatchEngine final {
   public:
     [[nodiscard]] const MatchState& state() const noexcept;
@@ -71,10 +90,14 @@ class MatchEngine final {
     [[nodiscard]] EligibilityResult capture_eligible_players();
     [[nodiscard]] EligibilityResult add_eligible_player(std::string steam_id);
     [[nodiscard]] EligibilityResult remove_eligible_player(std::string steam_id);
+    [[nodiscard]] CaptainSelectionResult select_captain(LogicalTeam team, std::string steam_id);
+    [[nodiscard]] CaptainSelectionResult clear_captain(LogicalTeam team);
 
   private:
     [[nodiscard]] static bool is_legal_transition(Phase from, Phase to) noexcept;
     [[nodiscard]] static std::string normalize_steam_id(std::string steam_id);
+    [[nodiscard]] TeamState& mutable_team(LogicalTeam team) noexcept;
+    void commit_captains();
 
     MatchState state_{};
 };

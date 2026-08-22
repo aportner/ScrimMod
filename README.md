@@ -142,3 +142,18 @@ scrim_remove "Player Name"
 
 These commands only select from players ScrimMod has already tracked. If duplicate
 players have the same name, use the Steam ID.
+
+Select two captains from the eligible pool, inspect the pending choices, and confirm
+them with:
+
+```text
+scrim_captain_a STEAM_0:1:12345
+scrim_captain_b "Player Name"
+scrim_status
+scrim_captains_confirm
+```
+
+Use `scrim_captain_clear a` or `scrim_captain_clear b` to clear a pending choice.
+Confirmation requires two different eligible players and advances the authoritative
+phase to `KnifeSetup`. Knife-round server reconciliation is the next implementation
+milestone; this checkpoint does not yet move players or enforce knife-only play.

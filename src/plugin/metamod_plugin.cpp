@@ -155,6 +155,26 @@ void print_status() {
                       eligible ? ", eligible" : "");
         server_print(status);
     }
+
+    for (const auto team : {scrimmod::core::LogicalTeam::A, scrimmod::core::LogicalTeam::B}) {
+        const char team_name = team == scrimmod::core::LogicalTeam::A ? 'A' : 'B';
+        const auto& captain = state.team(team).captain_steam_id;
+        if (!captain.has_value()) {
+            std::snprintf(status, sizeof(status), "Captain %c: not selected\n", team_name);
+            server_print(status);
+            continue;
+        }
+
+        const auto player = state.players().find(*captain);
+        const char* name =
+            player != state.players().end() ? player->second.last_known_name.c_str() : "unknown";
+        const char* connection = player != state.players().end() && player->second.connected
+                                     ? "connected"
+                                     : "disconnected";
+        std::snprintf(status, sizeof(status), "Captain %c: %s [%s] - %s\n", team_name, name,
+                      captain->c_str(), connection);
+        server_print(status);
+    }
 }
 
 const char* eligibility_error_message(const scrimmod::core::EligibilityError error) {
@@ -235,6 +255,128 @@ void add_eligible_player() { update_eligible_player(true); }
 
 void remove_eligible_player() { update_eligible_player(false); }
 
+const char* captain_error_message(const scrimmod::core::CaptainSelectionError error) {
+    using scrimmod::core::CaptainSelectionError;
+    switch (error) {
+    case CaptainSelectionError::None:
+        return "none";
+    case CaptainSelectionError::ScrimDisabled:
+        return "ScrimMod is disabled";
+    case CaptainSelectionError::WrongPhase:
+        return "captains can only be changed during captain selection";
+    case CaptainSelectionError::PoolNotCaptured:
+        return "the eligible pool has not been captured";
+    case CaptainSelectionError::InvalidSteamId:
+        return "the player argument is empty";
+    case CaptainSelectionError::UnknownPlayer:
+        return "no tracked player matches that Steam ID or exact name";
+    case CaptainSelectionError::IneligiblePlayer:
+        return "that player is not in the eligible pool";
+    case CaptainSelectionError::DuplicateCaptain:
+        return "that player is already the other team's captain";
+    }
+    return "unknown captain selection error";
+}
+
+void select_captain(const scrimmod::core::LogicalTeam team) {
+    const char team_name = team == scrimmod::core::LogicalTeam::A ? 'A' : 'B';
+    if (g_engfuncs.pfnCmd_Argc() != 2) {
+        server_print(team == scrimmod::core::LogicalTeam::A
+                         ? "Usage: scrim_captain_a <Steam ID or exact name>\n"
+                         : "Usage: scrim_captain_b <Steam ID or exact name>\n");
+        return;
+    }
+
+    const char* target = g_engfuncs.pfnCmd_Argv(1);
+    auto result = g_match_engine.select_captain(team, target != nullptr ? target : "");
+    if (result.error == scrimmod::core::CaptainSelectionError::UnknownPlayer) {
+        bool ambiguous = false;
+        const std::string steam_id = resolve_unique_player_name(target, ambiguous);
+        if (ambiguous) {
+            server_print("[ScrimMod] Player name is ambiguous; use the Steam ID.\n");
+            return;
+        }
+        if (!steam_id.empty()) {
+            result = g_match_engine.select_captain(team, steam_id);
+        }
+    }
+
+    if (!result.ok()) {
+        server_print("[ScrimMod] Cannot select captain: ");
+        server_print(captain_error_message(result.error));
+        server_print(".\n");
+        return;
+    }
+
+    char message[96]{};
+    std::snprintf(message, sizeof(message),
+                  result.changed ? "[ScrimMod] Team %c captain selected.\n"
+                                 : "[ScrimMod] Team %c captain is already selected.\n",
+                  team_name);
+    server_print(message);
+}
+
+void select_captain_a() { select_captain(scrimmod::core::LogicalTeam::A); }
+
+void select_captain_b() { select_captain(scrimmod::core::LogicalTeam::B); }
+
+void clear_captain() {
+    if (g_engfuncs.pfnCmd_Argc() != 2) {
+        server_print("Usage: scrim_captain_clear <a|b>\n");
+        return;
+    }
+
+    const char* target = g_engfuncs.pfnCmd_Argv(1);
+    scrimmod::core::LogicalTeam team{};
+    if (target != nullptr && (std::strcmp(target, "a") == 0 || std::strcmp(target, "A") == 0)) {
+        team = scrimmod::core::LogicalTeam::A;
+    } else if (target != nullptr &&
+               (std::strcmp(target, "b") == 0 || std::strcmp(target, "B") == 0)) {
+        team = scrimmod::core::LogicalTeam::B;
+    } else {
+        server_print("Usage: scrim_captain_clear <a|b>\n");
+        return;
+    }
+
+    const auto result = g_match_engine.clear_captain(team);
+    if (!result.ok()) {
+        server_print("[ScrimMod] Cannot clear captain: ");
+        server_print(captain_error_message(result.error));
+        server_print(".\n");
+        return;
+    }
+    server_print(result.changed ? "[ScrimMod] Captain selection cleared.\n"
+                                : "[ScrimMod] That captain is already clear.\n");
+}
+
+void confirm_captains() {
+    if (g_engfuncs.pfnCmd_Argc() != 1) {
+        server_print("Usage: scrim_captains_confirm\n");
+        return;
+    }
+
+    const auto result = g_match_engine.transition_to(scrimmod::core::Phase::KnifeSetup);
+    if (!result.ok()) {
+        switch (result.error) {
+        case scrimmod::core::TransitionError::ScrimDisabled:
+            server_print("[ScrimMod] Cannot confirm captains: ScrimMod is disabled.\n");
+            break;
+        case scrimmod::core::TransitionError::IllegalTransition:
+            server_print("[ScrimMod] Cannot confirm captains outside captain selection.\n");
+            break;
+        case scrimmod::core::TransitionError::PrerequisiteNotMet:
+            server_print("[ScrimMod] Cannot confirm captains until both teams have one.\n");
+            break;
+        case scrimmod::core::TransitionError::None:
+            break;
+        }
+        return;
+    }
+
+    apply_effects(result.effects);
+    server_print("[ScrimMod] Captains confirmed; entered KnifeSetup.\n");
+}
+
 } // namespace
 
 C_DLLEXPORT void WINAPI GiveFnptrsToDll(enginefuncs_t* engine_functions, globalvars_t* globals) {
@@ -299,6 +441,10 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS* function_table,
     g_engfuncs.pfnAddServerCommand("scrim_status", print_status);
     g_engfuncs.pfnAddServerCommand("scrim_add", add_eligible_player);
     g_engfuncs.pfnAddServerCommand("scrim_remove", remove_eligible_player);
+    g_engfuncs.pfnAddServerCommand("scrim_captain_a", select_captain_a);
+    g_engfuncs.pfnAddServerCommand("scrim_captain_b", select_captain_b);
+    g_engfuncs.pfnAddServerCommand("scrim_captain_clear", clear_captain);
+    g_engfuncs.pfnAddServerCommand("scrim_captains_confirm", confirm_captains);
     const cvar_t* registered_cvar = g_engfuncs.pfnCVarGetPointer(g_scrim_enabled.name);
     apply_enabled_value(registered_cvar != nullptr ? registered_cvar->string
                                                    : g_scrim_enabled.string);
