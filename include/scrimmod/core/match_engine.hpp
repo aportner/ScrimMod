@@ -34,7 +34,7 @@ struct TransitionResult {
 enum class PlayerUpdateError : std::uint8_t {
     None,
     ScrimDisabled,
-    InvalidSteamId,
+    InvalidPlayerId,
     UnknownPlayer,
 };
 
@@ -50,7 +50,7 @@ enum class EligibilityError : std::uint8_t {
     ScrimDisabled,
     WrongPhase,
     PoolNotCaptured,
-    InvalidSteamId,
+    InvalidPlayerId,
     UnknownPlayer,
 };
 
@@ -66,7 +66,7 @@ enum class CaptainSelectionError : std::uint8_t {
     ScrimDisabled,
     WrongPhase,
     PoolNotCaptured,
-    InvalidSteamId,
+    InvalidPlayerId,
     UnknownPlayer,
     IneligiblePlayer,
     DuplicateCaptain,
@@ -85,17 +85,18 @@ class MatchEngine final {
 
     [[nodiscard]] TransitionResult set_enabled(bool enabled);
     [[nodiscard]] TransitionResult transition_to(Phase target);
-    [[nodiscard]] PlayerUpdateResult player_connected(std::string steam_id, std::string name);
-    [[nodiscard]] PlayerUpdateResult player_disconnected(std::string steam_id);
+    [[nodiscard]] PlayerUpdateResult player_connected(std::string player_id, std::string name,
+                                                      PlayerType type = PlayerType::Human);
+    [[nodiscard]] PlayerUpdateResult player_disconnected(std::string player_id);
     [[nodiscard]] EligibilityResult capture_eligible_players();
-    [[nodiscard]] EligibilityResult add_eligible_player(std::string steam_id);
-    [[nodiscard]] EligibilityResult remove_eligible_player(std::string steam_id);
-    [[nodiscard]] CaptainSelectionResult select_captain(LogicalTeam team, std::string steam_id);
+    [[nodiscard]] EligibilityResult add_eligible_player(std::string player_id);
+    [[nodiscard]] EligibilityResult remove_eligible_player(std::string player_id);
+    [[nodiscard]] CaptainSelectionResult select_captain(LogicalTeam team, std::string player_id);
     [[nodiscard]] CaptainSelectionResult clear_captain(LogicalTeam team);
 
   private:
     [[nodiscard]] static bool is_legal_transition(Phase from, Phase to) noexcept;
-    [[nodiscard]] static std::string normalize_steam_id(std::string steam_id);
+    [[nodiscard]] static std::string normalize_player_id(std::string player_id);
     [[nodiscard]] TeamState& mutable_team(LogicalTeam team) noexcept;
     void commit_captains();
 

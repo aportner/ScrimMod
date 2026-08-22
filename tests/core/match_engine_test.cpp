@@ -20,6 +20,7 @@ int main() {
     using scrimmod::core::EligibilityError;
     using scrimmod::core::MatchEngine;
     using scrimmod::core::Phase;
+    using scrimmod::core::PlayerType;
     using scrimmod::core::PlayerUpdateError;
     using scrimmod::core::TransitionError;
 
@@ -44,7 +45,7 @@ int main() {
 
     const auto connected = engine.player_connected("  steam_0:1:10  ", "First Name");
     require(connected.ok() && connected.changed, "new player connection is recorded");
-    require(engine.state().players().size() == 1, "player is keyed once by Steam ID");
+    require(engine.state().players().size() == 1, "player is keyed once by player ID");
     const auto& player = engine.state().players().at("STEAM_0:1:10");
     require(player.connected, "new player is connected");
     require(player.last_known_name == "First Name", "new player name is recorded");
@@ -61,7 +62,7 @@ int main() {
     require(engine.state().eligible_players().size() == 1,
             "connected tracked player is eligible at capture");
     require(engine.state().eligible_players().front() == "STEAM_0:1:10",
-            "eligible pool contains stable Steam ID");
+            "eligible pool contains stable player ID");
 
     require(engine.player_connected("STEAM_0:0:20", "Late Player").ok(),
             "late player remains trackable");
@@ -101,8 +102,8 @@ int main() {
 
     const auto captain_a = engine.select_captain(scrimmod::core::LogicalTeam::A, "steam_0:1:10");
     require(captain_a.ok() && captain_a.changed, "eligible player can be selected for Team A");
-    require(engine.state().team(scrimmod::core::LogicalTeam::A).captain_steam_id == "STEAM_0:1:10",
-            "Team A captain is stored by normalized Steam ID");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).captain_player_id == "STEAM_0:1:10",
+            "Team A captain is stored by normalized player ID");
     const auto captain_a_again =
         engine.select_captain(scrimmod::core::LogicalTeam::A, "STEAM_0:1:10");
     require(captain_a_again.ok() && !captain_a_again.changed,
@@ -119,14 +120,14 @@ int main() {
     const auto clear_captain_b = engine.clear_captain(scrimmod::core::LogicalTeam::B);
     require(clear_captain_b.ok() && clear_captain_b.changed,
             "pending captain selection can be cleared");
-    require(!engine.state().team(scrimmod::core::LogicalTeam::B).captain_steam_id.has_value(),
+    require(!engine.state().team(scrimmod::core::LogicalTeam::B).captain_player_id.has_value(),
             "cleared captain is removed from pending state");
     require(engine.select_captain(scrimmod::core::LogicalTeam::B, "STEAM_0:0:20").ok(),
             "cleared captain can be selected again");
 
     require(engine.remove_eligible_player("STEAM_0:0:20").changed,
             "selected captain can be removed from eligibility");
-    require(!engine.state().team(scrimmod::core::LogicalTeam::B).captain_steam_id.has_value(),
+    require(!engine.state().team(scrimmod::core::LogicalTeam::B).captain_player_id.has_value(),
             "removing eligibility invalidates dependent captain selection");
     require(engine.add_eligible_player("STEAM_0:0:20").ok(),
             "removed captain can be restored to eligibility");
@@ -200,6 +201,22 @@ int main() {
             "disabling a disabled engine is state-idempotent");
     require(disabled_again.effects.size() == 1,
             "repeated disable still reconciles server configuration");
+
+    MatchEngine bot_engine;
+    require(bot_engine.set_enabled(true).ok(), "bot test engine enables");
+    require(bot_engine.player_connected("bot:42", "Test Bot", PlayerType::Bot).ok(),
+            "bot can be tracked with a synthetic player ID");
+    require(bot_engine.player_connected("STEAM_0:1:77", "Human Captain").ok(),
+            "human can be tracked alongside bot");
+    require(bot_engine.capture_eligible_players().ok(), "mixed eligible pool is captured");
+    require(bot_engine.state().players().at("BOT:42").type == PlayerType::Bot,
+            "core preserves explicit bot player type");
+    require(bot_engine.select_captain(scrimmod::core::LogicalTeam::A, "BOT:42").ok(),
+            "eligible bot can be selected as captain");
+    require(bot_engine.select_captain(scrimmod::core::LogicalTeam::B, "STEAM_0:1:77").ok(),
+            "eligible human can captain the other team");
+    require(bot_engine.transition_to(Phase::KnifeSetup).ok(),
+            "bot captain can be confirmed through normal transition rules");
 
     std::cout << "All ScrimMod engine tests passed\n";
     return EXIT_SUCCESS;

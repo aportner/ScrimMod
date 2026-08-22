@@ -126,14 +126,15 @@ authoritative core state with:
 scrim_status
 ```
 
-When enabled, `scrim_status` also lists tracked human Steam players by normalized
-Steam ID and connected/disconnected state. Enabling captures players already on the
-server; later reconnects update the same persistent player record rather than using
-the temporary client slot as identity. That initial connected-player set is sealed as
-the eligible pool. Players joining afterward are tracked but are not automatically
-made draft-eligible. During captain selection, an administrator can explicitly
-change that fixed pool from the server console or RCON using a normalized Steam ID
-or a unique exact player name (quote names containing spaces):
+When enabled, `scrim_status` also lists tracked players by normalized player ID and
+connected/disconnected state. Human player IDs are Steam IDs. Enabling captures
+players already on the server; later reconnects update the same persistent player
+record rather than using the temporary client slot as identity. That initial
+connected-player set is sealed as the eligible pool. Players joining afterward are
+tracked but are not automatically made draft-eligible. During captain selection, an
+administrator can explicitly change that fixed pool from the server console or RCON
+using a normalized player ID or a unique exact player name (quote names containing
+spaces):
 
 ```text
 scrim_add STEAM_0:1:12345
@@ -141,7 +142,7 @@ scrim_remove "Player Name"
 ```
 
 These commands only select from players ScrimMod has already tracked. If duplicate
-players have the same name, use the Steam ID.
+players have the same name, use the player ID.
 
 Select two captains from the eligible pool, inspect the pending choices, and confirm
 them with:
@@ -157,3 +158,25 @@ Use `scrim_captain_clear a` or `scrim_captain_clear b` to clear a pending choice
 Confirmation requires two different eligible players and advances the authoritative
 phase to `KnifeSetup`. Knife-round server reconciliation is the next implementation
 milestone; this checkpoint does not yet move players or enforce knife-only play.
+
+### Bot end-to-end testing
+
+Bots are excluded by default. Before enabling a scrim, opt them into tracking and the
+initial eligible pool with:
+
+```text
+scrim_allow_bots 1
+scrim_enabled 1
+```
+
+Each bot receives a synthetic ID such as `BOT:42`, derived from its server-assigned
+user ID. It can be added, removed, or selected as a captain exactly like a human:
+
+```text
+scrim_captain_a BOT:42
+```
+
+The ID lasts only for that bot connection. Removing and recreating the bot gives it
+a new ID and intentionally does not restore its former match assignment. HLTV and
+proxy clients remain excluded. Set `scrim_allow_bots` before `scrim_enabled 1` so
+bots already on the server are captured in the initial eligible pool.

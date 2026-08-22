@@ -66,18 +66,26 @@ The plugin may update CS's displayed CT/T scores as necessary, but internal scor
 
 ## **Players**
 
-Players should be tracked by Steam ID rather than player slot, entity index, or name.
+Players should be tracked by an explicit player ID rather than player slot, entity
+index, or name.
 
 Player slots and entity indexes are temporary and MUST NOT be used as persistent player identifiers.
 
+For humans, the player ID is the normalized Steam ID. For opt-in end-to-end testing,
+bots may use a synthetic `BOT:<userid>` ID based on the engine's connection-scoped
+user ID. Bot IDs are only stable for that connection: removing and recreating a bot
+creates a new identity and does not restore its prior assignment. HLTV and proxy
+clients are never players.
+
 A player should conceptually contain:
 
-Steam ID  
-Last Known Name  
-Logical Team  
-Connected/Disconnected State
+* Player ID
+* Player Type (Human/Bot)
+* Last Known Name
+* Logical Team
+* Connected/Disconnected State
 
-If a player disconnects and reconnects, Scrim Mod should recognize the Steam ID and restore that player's match assignment.
+If a human disconnects and reconnects, Scrim Mod should recognize the Steam ID and restore that player's match assignment.
 
 For example:
 
@@ -95,6 +103,7 @@ When a scrim begins, Scrim Mod should capture a roster of eligible players.
 Eligible players should generally be:
 
 * Human players  
+* Bots only when explicitly enabled for end-to-end testing
 * Connected  
 * Not HLTV  
 * Not explicitly excluded
@@ -215,7 +224,7 @@ Captain 2: disgrace
 
 Confirm?
 
-Captains should be stored by Steam ID.
+Captains should be stored by player ID.
 
 ## **Knife Round**
 
@@ -346,7 +355,7 @@ rather than attempting to infer this from roster sizes.
 
 The draft must tolerate players disconnecting.
 
-If an unpicked player disconnects, the player's Steam ID should remain in the eligible player pool and the UI should indicate that the player is disconnected.
+If an unpicked player disconnects, the player ID should remain in the eligible player pool and the UI should indicate that the player is disconnected.
 
 For example:
 
@@ -369,7 +378,7 @@ If a captain disconnects during a captain-dependent stage, the process should pa
 
 Menu entries should refer to stable internal player identifiers rather than temporary menu positions.
 
-For example, if menu option 2 represented a particular Steam ID when the menu was created, option 2 should still resolve to that Steam ID even if another player disconnects before the selection callback occurs.
+For example, if menu option 2 represented a particular player ID when the menu was created, option 2 should still resolve to that player ID even if another player disconnects before the selection callback occurs.
 
 The UI should support pagination when necessary.
 
@@ -764,7 +773,7 @@ ScrimPlugin
     |     RewindTo()  
     |  
     \+-- PlayerManager  
-    |     Steam ID Tracking  
+    |     Player ID Tracking
     |     Reconnect Handling  
     |     Team Enforcement  
     |  
@@ -842,10 +851,11 @@ ambiguous round events must never silently advance scoring.
 
 ## **State Lifetime and Failure Policy**
 
-Player assignments survive disconnect/reconnect during an active plugin instance by
-Steam ID. Persistent recovery across a server process restart or plugin unload/reload
-is not required initially. Startup, plugin reload, and unrecoverable initialization
-failure must leave the server in a disabled, reset, pregame-safe condition.
+Human player assignments survive disconnect/reconnect during an active plugin
+instance by Steam ID. Synthetic bot IDs last only for one connection. Persistent
+recovery across a server process restart or plugin unload/reload is not required
+initially. Startup, plugin reload, and unrecoverable initialization failure must
+leave the server in a disabled, reset, pregame-safe condition.
 
 Behavior across map changes will be implemented only after an explicit lifecycle
 test is available. Until then, a map change should safely abort and reset the active

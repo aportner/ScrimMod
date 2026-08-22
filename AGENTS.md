@@ -6,7 +6,8 @@
 - ScrimMod's logical match state is authoritative.
 - Never infer persistent identity from client slots, entity indexes, names, CT/T
   assignment, or the engine scoreboard.
-- Normalize and store players by Steam ID.
+- Normalize and store players by an explicit player ID. Human IDs are Steam IDs;
+  opt-in test bots use connection-scoped `BOT:<userid>` IDs supplied by the adapter.
 
 ## Architecture
 
@@ -24,7 +25,8 @@
 - Never count ambiguous, duplicate, knife, warmup, or restart-generated rounds.
 - Config execution, restart sequences, and forced team changes must not advance state.
 - Validate command permissions and arguments at the adapter boundary.
-- Preserve active roster assignments across reconnects by Steam ID.
+- Preserve active human roster assignments across reconnects by Steam ID. Never
+  claim reconnect persistence for connection-scoped bot IDs.
 - Prefer pausing or explicit admin recovery over guessing after ambiguous events.
 
 ## Development

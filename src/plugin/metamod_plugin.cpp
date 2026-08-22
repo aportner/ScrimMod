@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,15 @@ char g_scrim_enabled_default[] = "0";
 cvar_t g_scrim_enabled = {
     "scrim_enabled", g_scrim_enabled_default, FCVAR_SERVER, 0.0F, nullptr,
 };
+char g_scrim_allow_bots_default[] = "0";
+cvar_t g_scrim_allow_bots = {
+    "scrim_allow_bots", g_scrim_allow_bots_default, FCVAR_SERVER, 0.0F, nullptr,
+};
+
+struct ServerPlayerIdentity {
+    std::string player_id;
+    scrimmod::core::PlayerType type;
+};
 
 void server_print(const char* message) {
     if (g_engfuncs.pfnServerPrint != nullptr) {
@@ -67,12 +77,38 @@ void apply_effects(const std::vector<scrimmod::core::Effect>& effects) {
     }
 }
 
-bool is_trackable_steam_id(const char* steam_id) {
-    if (steam_id == nullptr || std::strncmp(steam_id, "STEAM_", 6) != 0) {
+bool is_steam_player_id(const char* player_id) {
+    if (player_id == nullptr || std::strncmp(player_id, "STEAM_", 6) != 0) {
         return false;
     }
-    return std::strcmp(steam_id, "STEAM_ID_PENDING") != 0 &&
-           std::strcmp(steam_id, "STEAM_ID_LAN") != 0;
+    return std::strcmp(player_id, "STEAM_ID_PENDING") != 0 &&
+           std::strcmp(player_id, "STEAM_ID_LAN") != 0;
+}
+
+bool bot_tracking_enabled() {
+    return g_engfuncs.pfnCVarGetFloat != nullptr &&
+           g_engfuncs.pfnCVarGetFloat(g_scrim_allow_bots.name) != 0.0F;
+}
+
+std::optional<ServerPlayerIdentity> get_player_identity(edict_t* entity, const bool include_bots) {
+    if (entity == nullptr || entity->free != FALSE || (entity->v.flags & FL_PROXY) != 0) {
+        return std::nullopt;
+    }
+
+    const char* auth_id = g_engfuncs.pfnGetPlayerAuthId(entity);
+    if (is_steam_player_id(auth_id)) {
+        return ServerPlayerIdentity{auth_id, scrimmod::core::PlayerType::Human};
+    }
+
+    const bool is_bot_auth_id = auth_id != nullptr && std::strcmp(auth_id, "BOT") == 0;
+    if (include_bots && (is_bot_auth_id || (entity->v.flags & FL_FAKECLIENT) != 0)) {
+        const int user_id = g_engfuncs.pfnGetPlayerUserId(entity);
+        if (user_id > 0) {
+            return ServerPlayerIdentity{"BOT:" + std::to_string(user_id),
+                                        scrimmod::core::PlayerType::Bot};
+        }
+    }
+    return std::nullopt;
 }
 
 void track_connected_player(edict_t* entity) {
@@ -80,13 +116,14 @@ void track_connected_player(edict_t* entity) {
         return;
     }
 
-    const char* steam_id = g_engfuncs.pfnGetPlayerAuthId(entity);
-    if (!is_trackable_steam_id(steam_id)) {
+    const auto identity = get_player_identity(entity, bot_tracking_enabled());
+    if (!identity.has_value()) {
         return;
     }
 
     const char* name = g_engfuncs.pfnSzFromIndex(entity->v.netname);
-    static_cast<void>(g_match_engine.player_connected(steam_id, name != nullptr ? name : ""));
+    static_cast<void>(g_match_engine.player_connected(identity->player_id,
+                                                      name != nullptr ? name : "", identity->type));
 }
 
 void capture_connected_players() {
@@ -106,9 +143,9 @@ void on_client_put_in_server(edict_t* entity) {
 
 void on_client_disconnect(edict_t* entity) {
     if (g_match_engine.state().enabled() && entity != nullptr) {
-        const char* steam_id = g_engfuncs.pfnGetPlayerAuthId(entity);
-        if (is_trackable_steam_id(steam_id)) {
-            static_cast<void>(g_match_engine.player_disconnected(steam_id));
+        const auto identity = get_player_identity(entity, true);
+        if (identity.has_value()) {
+            static_cast<void>(g_match_engine.player_disconnected(identity->player_id));
         }
     }
     RETURN_META(MRES_IGNORED);
@@ -138,27 +175,30 @@ void print_status() {
 
     std::vector<const scrimmod::core::Player*> players;
     players.reserve(state.players().size());
-    for (const auto& [steam_id, player] : state.players()) {
-        static_cast<void>(steam_id);
+    for (const auto& [player_id, player] : state.players()) {
+        static_cast<void>(player_id);
         players.push_back(&player);
     }
-    std::sort(players.begin(), players.end(),
-              [](const auto* left, const auto* right) { return left->steam_id < right->steam_id; });
+    std::sort(players.begin(), players.end(), [](const auto* left, const auto* right) {
+        return left->player_id < right->player_id;
+    });
 
     std::snprintf(status, sizeof(status), "Tracked Players: %zu\n", players.size());
     server_print(status);
     for (const auto* player : players) {
         const bool eligible = std::binary_search(state.eligible_players().begin(),
-                                                 state.eligible_players().end(), player->steam_id);
-        std::snprintf(status, sizeof(status), "  %s [%s] - %s%s\n", player->last_known_name.c_str(),
-                      player->steam_id.c_str(), player->connected ? "connected" : "disconnected",
+                                                 state.eligible_players().end(), player->player_id);
+        std::snprintf(status, sizeof(status), "  %s [%s] - %s%s%s\n",
+                      player->last_known_name.c_str(), player->player_id.c_str(),
+                      player->connected ? "connected" : "disconnected",
+                      player->type == scrimmod::core::PlayerType::Bot ? ", bot" : "",
                       eligible ? ", eligible" : "");
         server_print(status);
     }
 
     for (const auto team : {scrimmod::core::LogicalTeam::A, scrimmod::core::LogicalTeam::B}) {
         const char team_name = team == scrimmod::core::LogicalTeam::A ? 'A' : 'B';
-        const auto& captain = state.team(team).captain_steam_id;
+        const auto& captain = state.team(team).captain_player_id;
         if (!captain.has_value()) {
             std::snprintf(status, sizeof(status), "Captain %c: not selected\n", team_name);
             server_print(status);
@@ -188,10 +228,10 @@ const char* eligibility_error_message(const scrimmod::core::EligibilityError err
         return "the eligible pool can only be changed during captain selection";
     case EligibilityError::PoolNotCaptured:
         return "the eligible pool has not been captured";
-    case EligibilityError::InvalidSteamId:
+    case EligibilityError::InvalidPlayerId:
         return "the player argument is empty";
     case EligibilityError::UnknownPlayer:
-        return "no tracked player matches that Steam ID or exact name";
+        return "no tracked player matches that player ID or exact name";
     }
     return "unknown eligibility error";
 }
@@ -203,7 +243,7 @@ std::string resolve_unique_player_name(const char* target, bool& ambiguous) {
         return resolved;
     }
 
-    for (const auto& [steam_id, player] : g_match_engine.state().players()) {
+    for (const auto& [player_id, player] : g_match_engine.state().players()) {
         if (player.last_known_name != target) {
             continue;
         }
@@ -211,15 +251,15 @@ std::string resolve_unique_player_name(const char* target, bool& ambiguous) {
             ambiguous = true;
             return {};
         }
-        resolved = steam_id;
+        resolved = player_id;
     }
     return resolved;
 }
 
 void update_eligible_player(const bool add) {
     if (g_engfuncs.pfnCmd_Argc() != 2) {
-        server_print(add ? "Usage: scrim_add <Steam ID or exact name>\n"
-                         : "Usage: scrim_remove <Steam ID or exact name>\n");
+        server_print(add ? "Usage: scrim_add <player ID or exact name>\n"
+                         : "Usage: scrim_remove <player ID or exact name>\n");
         return;
     }
 
@@ -228,14 +268,14 @@ void update_eligible_player(const bool add) {
                       : g_match_engine.remove_eligible_player(target != nullptr ? target : "");
     if (result.error == scrimmod::core::EligibilityError::UnknownPlayer) {
         bool ambiguous = false;
-        const std::string steam_id = resolve_unique_player_name(target, ambiguous);
+        const std::string player_id = resolve_unique_player_name(target, ambiguous);
         if (ambiguous) {
-            server_print("[ScrimMod] Player name is ambiguous; use the Steam ID.\n");
+            server_print("[ScrimMod] Player name is ambiguous; use the player ID.\n");
             return;
         }
-        if (!steam_id.empty()) {
-            result = add ? g_match_engine.add_eligible_player(steam_id)
-                         : g_match_engine.remove_eligible_player(steam_id);
+        if (!player_id.empty()) {
+            result = add ? g_match_engine.add_eligible_player(player_id)
+                         : g_match_engine.remove_eligible_player(player_id);
         }
     }
 
@@ -266,10 +306,10 @@ const char* captain_error_message(const scrimmod::core::CaptainSelectionError er
         return "captains can only be changed during captain selection";
     case CaptainSelectionError::PoolNotCaptured:
         return "the eligible pool has not been captured";
-    case CaptainSelectionError::InvalidSteamId:
+    case CaptainSelectionError::InvalidPlayerId:
         return "the player argument is empty";
     case CaptainSelectionError::UnknownPlayer:
-        return "no tracked player matches that Steam ID or exact name";
+        return "no tracked player matches that player ID or exact name";
     case CaptainSelectionError::IneligiblePlayer:
         return "that player is not in the eligible pool";
     case CaptainSelectionError::DuplicateCaptain:
@@ -282,8 +322,8 @@ void select_captain(const scrimmod::core::LogicalTeam team) {
     const char team_name = team == scrimmod::core::LogicalTeam::A ? 'A' : 'B';
     if (g_engfuncs.pfnCmd_Argc() != 2) {
         server_print(team == scrimmod::core::LogicalTeam::A
-                         ? "Usage: scrim_captain_a <Steam ID or exact name>\n"
-                         : "Usage: scrim_captain_b <Steam ID or exact name>\n");
+                         ? "Usage: scrim_captain_a <player ID or exact name>\n"
+                         : "Usage: scrim_captain_b <player ID or exact name>\n");
         return;
     }
 
@@ -291,13 +331,13 @@ void select_captain(const scrimmod::core::LogicalTeam team) {
     auto result = g_match_engine.select_captain(team, target != nullptr ? target : "");
     if (result.error == scrimmod::core::CaptainSelectionError::UnknownPlayer) {
         bool ambiguous = false;
-        const std::string steam_id = resolve_unique_player_name(target, ambiguous);
+        const std::string player_id = resolve_unique_player_name(target, ambiguous);
         if (ambiguous) {
-            server_print("[ScrimMod] Player name is ambiguous; use the Steam ID.\n");
+            server_print("[ScrimMod] Player name is ambiguous; use the player ID.\n");
             return;
         }
-        if (!steam_id.empty()) {
-            result = g_match_engine.select_captain(team, steam_id);
+        if (!player_id.empty()) {
+            result = g_match_engine.select_captain(team, player_id);
         }
     }
 
@@ -430,6 +470,7 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS* function_table,
     }
 
     g_engfuncs.pfnCVarRegister(&g_scrim_enabled);
+    g_engfuncs.pfnCVarRegister(&g_scrim_allow_bots);
     if (!scrimmod::plugin::add_cvar_listener(g_scrim_enabled.name, apply_enabled_value)) {
         server_print("[ScrimMod] Cannot load: failed to register scrim_enabled listener.\n");
         scrimmod::plugin::shutdown_server_apis();

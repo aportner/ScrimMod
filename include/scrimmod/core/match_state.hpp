@@ -30,18 +30,20 @@ enum class Phase : std::uint8_t {
 
 enum class LogicalTeam : std::uint8_t { A, B };
 enum class Side : std::uint8_t { Terrorist, CounterTerrorist };
+enum class PlayerType : std::uint8_t { Human, Bot };
 
 [[nodiscard]] const char* phase_name(Phase phase) noexcept;
 
 struct Player {
-    std::string steam_id;
+    std::string player_id;
     std::string last_known_name;
     std::optional<LogicalTeam> logical_team;
+    PlayerType type{PlayerType::Human};
     bool connected{false};
 };
 
 struct TeamState {
-    std::optional<std::string> captain_steam_id;
+    std::optional<std::string> captain_player_id;
     std::vector<std::string> roster;
     int total_score{0};
     int period_score{0};
