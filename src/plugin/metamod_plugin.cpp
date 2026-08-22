@@ -134,6 +134,22 @@ server_team(const scrimmod::core::PlayerDestination destination) {
     return scrimmod::plugin::ServerPlayerTeam::Spectator;
 }
 
+const char* server_team_name(const scrimmod::plugin::ServerPlayerTeam team) {
+    switch (team) {
+    case scrimmod::plugin::ServerPlayerTeam::Unassigned:
+        return "unassigned";
+    case scrimmod::plugin::ServerPlayerTeam::Terrorist:
+        return "T";
+    case scrimmod::plugin::ServerPlayerTeam::CounterTerrorist:
+        return "CT";
+    case scrimmod::plugin::ServerPlayerTeam::Spectator:
+        return "spectator";
+    case scrimmod::plugin::ServerPlayerTeam::Unknown:
+        return "unknown";
+    }
+    return "unknown";
+}
+
 void apply_effects(const std::vector<scrimmod::core::Effect>& effects) {
     for (const auto& effect : effects) {
         switch (effect.type) {
@@ -148,9 +164,21 @@ void apply_effects(const std::vector<scrimmod::core::Effect>& effects) {
             if (entity == nullptr) {
                 server_print("[ScrimMod] Player disconnected before team assignment; "
                              "reconciliation deferred.\n");
-            } else if (!scrimmod::plugin::assign_player_team(entity,
-                                                             server_team(effect.destination))) {
-                server_print("[ScrimMod] ReGameDLL rejected a player team assignment.\n");
+            } else {
+                const auto requested_team = server_team(effect.destination);
+                const auto assignment =
+                    scrimmod::plugin::assign_player_team(entity, requested_team);
+                if (!assignment.ok(requested_team)) {
+                    char message[256]{};
+                    std::snprintf(message, sizeof(message),
+                                  "[ScrimMod] Team assignment failed for %s: requested %s, "
+                                  "before %s, after %s, JoinTeam %s.\n",
+                                  effect.player_id.c_str(), server_team_name(requested_team),
+                                  server_team_name(assignment.previous_team),
+                                  server_team_name(assignment.current_team),
+                                  assignment.join_accepted ? "accepted" : "rejected");
+                    server_print(message);
+                }
             }
             break;
         }
@@ -376,11 +404,13 @@ void print_status() {
     for (const auto* player : players) {
         const bool eligible = std::binary_search(state.eligible_players().begin(),
                                                  state.eligible_players().end(), player->player_id);
-        std::snprintf(status, sizeof(status), "  %s [%s] - %s%s%s\n",
+        edict_t* entity = find_connected_entity(player->player_id);
+        const auto physical_team = scrimmod::plugin::player_team(entity);
+        std::snprintf(status, sizeof(status), "  %s [%s] - %s%s%s, server team: %s\n",
                       player->last_known_name.c_str(), player->player_id.c_str(),
                       player->connected ? "connected" : "disconnected",
                       player->type == scrimmod::core::PlayerType::Bot ? ", bot" : "",
-                      eligible ? ", eligible" : "");
+                      eligible ? ", eligible" : "", server_team_name(physical_team));
         server_print(status);
     }
 

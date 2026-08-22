@@ -38,14 +38,26 @@ enum class RoundEndType { Gameplay, Restart, Commence };
 enum class RoundWinner { None, Terrorist, CounterTerrorist };
 using RoundEndListener = void (*)(RoundEndType type, RoundWinner winner);
 using RoundRestartListener = void (*)();
-enum class ServerPlayerTeam { Terrorist, CounterTerrorist, Spectator };
+enum class ServerPlayerTeam { Unassigned, Terrorist, CounterTerrorist, Spectator, Unknown };
+
+struct TeamAssignmentResult {
+    ServerPlayerTeam previous_team{ServerPlayerTeam::Unknown};
+    ServerPlayerTeam current_team{ServerPlayerTeam::Unknown};
+    bool join_accepted{false};
+
+    [[nodiscard]] bool ok(const ServerPlayerTeam requested_team) const noexcept {
+        return current_team == requested_team;
+    }
+};
 
 [[nodiscard]] ApiStatus initialize_server_apis(const char* game_dll_path) noexcept;
 void shutdown_server_apis() noexcept;
 [[nodiscard]] const char* api_error_message(ApiError error) noexcept;
 [[nodiscard]] bool add_cvar_listener(const char* name, CvarListener listener) noexcept;
 void remove_cvar_listener(const char* name, CvarListener listener) noexcept;
-[[nodiscard]] bool assign_player_team(edict_s* entity, ServerPlayerTeam team) noexcept;
+[[nodiscard]] ServerPlayerTeam player_team(edict_s* entity) noexcept;
+[[nodiscard]] TeamAssignmentResult assign_player_team(edict_s* entity,
+                                                      ServerPlayerTeam team) noexcept;
 [[nodiscard]] bool ensure_knife_loadout(edict_s* entity) noexcept;
 [[nodiscard]] bool install_gameplay_hooks(PlayerSpawnListener spawn_listener,
                                           TeamChoiceListener team_choice_listener,

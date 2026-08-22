@@ -122,14 +122,48 @@ void reset_regamedll_api() noexcept {
     g_regamedll_api = nullptr;
 }
 
-bool assign_regamedll_player_team(edict_s* entity, const ServerPlayerTeam team) noexcept {
+namespace {
+
+ServerPlayerTeam server_player_team(const TeamName team) noexcept {
+    switch (team) {
+    case UNASSIGNED:
+        return ServerPlayerTeam::Unassigned;
+    case TERRORIST:
+        return ServerPlayerTeam::Terrorist;
+    case CT:
+        return ServerPlayerTeam::CounterTerrorist;
+    case SPECTATOR:
+        return ServerPlayerTeam::Spectator;
+    }
+    return ServerPlayerTeam::Unknown;
+}
+
+} // namespace
+
+ServerPlayerTeam regamedll_player_team(edict_s* entity) noexcept {
     if (g_regamedll_api == nullptr || entity == nullptr) {
-        return false;
+        return ServerPlayerTeam::Unknown;
+    }
+
+    CBasePlayer* player = CBasePlayer::Instance(entity);
+    if (player == nullptr) {
+        return ServerPlayerTeam::Unknown;
+    }
+
+    return server_player_team(player->m_iTeam);
+}
+
+TeamAssignmentResult assign_regamedll_player_team(edict_s* entity,
+                                                  const ServerPlayerTeam team) noexcept {
+    TeamAssignmentResult result{};
+    result.previous_team = regamedll_player_team(entity);
+    if (g_regamedll_api == nullptr || entity == nullptr) {
+        return result;
     }
 
     CBasePlayer* player = CBasePlayer::Instance(entity);
     if (player == nullptr || player->CSPlayer() == nullptr) {
-        return false;
+        return result;
     }
 
     TeamName destination = SPECTATOR;
@@ -143,11 +177,18 @@ bool assign_regamedll_player_team(edict_s* entity, const ServerPlayerTeam team) 
     case ServerPlayerTeam::Spectator:
         destination = SPECTATOR;
         break;
+    case ServerPlayerTeam::Unassigned:
+    case ServerPlayerTeam::Unknown:
+        return result;
     }
     if (player->m_iTeam == destination) {
-        return true;
+        result.current_team = result.previous_team;
+        result.join_accepted = true;
+        return result;
     }
-    return player->CSPlayer()->JoinTeam(destination);
+    result.join_accepted = player->CSPlayer()->JoinTeam(destination);
+    result.current_team = regamedll_player_team(entity);
+    return result;
 }
 
 bool ensure_regamedll_knife_loadout(edict_s* entity) noexcept {
