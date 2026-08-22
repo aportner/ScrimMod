@@ -39,6 +39,11 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
         result.error = TransitionError::IllegalTransition;
         return result;
     }
+    if (target == Phase::KnifeComplete && (!state_.knife_winner_player_id_.has_value() ||
+                                           !state_.knife_loser_player_id_.has_value())) {
+        result.error = TransitionError::PrerequisiteNotMet;
+        return result;
+    }
     if (state_.phase_ == Phase::CaptainSelection && target == Phase::KnifeSetup &&
         (!state_.team_a_.captain_player_id.has_value() ||
          !state_.team_b_.captain_player_id.has_value() ||
@@ -120,6 +125,11 @@ PlayerUpdateResult MatchEngine::player_disconnected(std::string player_id) {
     if (player_it->second.connected) {
         player_it->second.connected = false;
         result.changed = true;
+    }
+    if (state_.phase_ == Phase::KnifeLive && (state_.team_a_.captain_player_id == player_id ||
+                                              state_.team_b_.captain_player_id == player_id)) {
+        const auto replay = require_knife_replay();
+        result.effects = replay.effects;
     }
     return result;
 }
@@ -343,6 +353,72 @@ bool MatchEngine::can_player_acquire_weapon(std::string player_id, const bool is
     return is_captain && is_knife;
 }
 
+KnifeKillResult MatchEngine::player_killed(std::string victim_player_id,
+                                           std::string killer_player_id) {
+    KnifeKillResult result{};
+    if (state_.phase_ != Phase::KnifeLive) {
+        return result;
+    }
+
+    victim_player_id = normalize_player_id(std::move(victim_player_id));
+    killer_player_id = normalize_player_id(std::move(killer_player_id));
+    const bool victim_is_a = state_.team_a_.captain_player_id == victim_player_id;
+    const bool victim_is_b = state_.team_b_.captain_player_id == victim_player_id;
+    const bool clean_a_kill = victim_is_b && state_.team_a_.captain_player_id == killer_player_id;
+    const bool clean_b_kill = victim_is_a && state_.team_b_.captain_player_id == killer_player_id;
+    if (!clean_a_kill && !clean_b_kill) {
+        auto replay = require_knife_replay();
+        result.outcome = KnifeKillOutcome::ReplayRequired;
+        result.effects = std::move(replay.effects);
+        return result;
+    }
+
+    state_.knife_winner_player_id_ = killer_player_id;
+    state_.knife_loser_player_id_ = victim_player_id;
+    const auto completed = transition_to(Phase::KnifeComplete);
+    result.outcome =
+        completed.ok() ? KnifeKillOutcome::WinnerDecided : KnifeKillOutcome::ReplayRequired;
+    result.effects = completed.effects;
+    return result;
+}
+
+KnifeKillResult MatchEngine::force_knife_winner(std::string winner_player_id) {
+    KnifeKillResult result{};
+    if (state_.phase_ != Phase::KnifeSetup && state_.phase_ != Phase::KnifeLive) {
+        return result;
+    }
+
+    winner_player_id = normalize_player_id(std::move(winner_player_id));
+    std::string loser_player_id;
+    if (state_.team_a_.captain_player_id == winner_player_id) {
+        loser_player_id = *state_.team_b_.captain_player_id;
+    } else if (state_.team_b_.captain_player_id == winner_player_id) {
+        loser_player_id = *state_.team_a_.captain_player_id;
+    } else {
+        return result;
+    }
+
+    state_.knife_winner_player_id_ = winner_player_id;
+    state_.knife_loser_player_id_ = std::move(loser_player_id);
+    const auto completed = transition_to(Phase::KnifeComplete);
+    if (!completed.ok()) {
+        state_.knife_winner_player_id_.reset();
+        state_.knife_loser_player_id_.reset();
+        result.outcome = KnifeKillOutcome::ReplayRequired;
+        return result;
+    }
+    result.outcome = KnifeKillOutcome::WinnerDecided;
+    result.effects = completed.effects;
+    return result;
+}
+
+TransitionResult MatchEngine::knife_round_ended(const bool generated_restart) {
+    if (generated_restart || state_.phase_ != Phase::KnifeLive) {
+        return {};
+    }
+    return require_knife_replay();
+}
+
 TeamState& MatchEngine::mutable_team(const LogicalTeam team) noexcept {
     return team == LogicalTeam::A ? state_.team_a_ : state_.team_b_;
 }
@@ -392,6 +468,12 @@ bool MatchEngine::is_knife_phase() const noexcept {
     return state_.phase_ == Phase::KnifeSetup || state_.phase_ == Phase::KnifeLive;
 }
 
+TransitionResult MatchEngine::require_knife_replay() {
+    state_.knife_winner_player_id_.reset();
+    state_.knife_loser_player_id_.reset();
+    return transition_to(Phase::KnifeSetup);
+}
+
 bool MatchEngine::is_legal_transition(const Phase from, const Phase to) noexcept {
     switch (from) {
     case Phase::Disabled:
@@ -399,7 +481,7 @@ bool MatchEngine::is_legal_transition(const Phase from, const Phase to) noexcept
     case Phase::CaptainSelection:
         return to == Phase::KnifeSetup;
     case Phase::KnifeSetup:
-        return to == Phase::KnifeLive;
+        return to == Phase::KnifeLive || to == Phase::KnifeComplete;
     case Phase::KnifeLive:
         return to == Phase::KnifeComplete || to == Phase::KnifeSetup;
     case Phase::KnifeComplete:

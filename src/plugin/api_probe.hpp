@@ -18,10 +18,11 @@ void reset_regamedll_api() noexcept;
 void remove_rehlds_cvar_listener(const char* name, CvarListener listener) noexcept;
 [[nodiscard]] bool assign_regamedll_player_team(edict_s* entity, ServerPlayerTeam team) noexcept;
 [[nodiscard]] bool ensure_regamedll_knife_loadout(edict_s* entity) noexcept;
-[[nodiscard]] bool
-install_regamedll_gameplay_hooks(PlayerSpawnListener spawn_listener,
-                                 TeamChoiceListener team_choice_listener,
-                                 WeaponAcquireListener weapon_acquire_listener) noexcept;
+[[nodiscard]] bool install_regamedll_gameplay_hooks(PlayerSpawnListener spawn_listener,
+                                                    TeamChoiceListener team_choice_listener,
+                                                    WeaponAcquireListener weapon_acquire_listener,
+                                                    PlayerKilledListener player_killed_listener,
+                                                    RoundEndListener round_end_listener) noexcept;
 void remove_regamedll_gameplay_hooks() noexcept;
 
 } // namespace scrimmod::plugin

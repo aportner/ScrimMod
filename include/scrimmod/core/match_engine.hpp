@@ -48,6 +48,7 @@ enum class PlayerUpdateError : std::uint8_t {
 struct PlayerUpdateResult {
     PlayerUpdateError error{PlayerUpdateError::None};
     bool changed{false};
+    std::vector<Effect> effects;
 
     [[nodiscard]] bool ok() const noexcept { return error == PlayerUpdateError::None; }
 };
@@ -86,6 +87,13 @@ struct CaptainSelectionResult {
     [[nodiscard]] bool ok() const noexcept { return error == CaptainSelectionError::None; }
 };
 
+enum class KnifeKillOutcome : std::uint8_t { Ignored, WinnerDecided, ReplayRequired };
+
+struct KnifeKillResult {
+    KnifeKillOutcome outcome{KnifeKillOutcome::Ignored};
+    std::vector<Effect> effects;
+};
+
 class MatchEngine final {
   public:
     [[nodiscard]] const MatchState& state() const noexcept;
@@ -104,6 +112,10 @@ class MatchEngine final {
     [[nodiscard]] std::vector<Effect> reconciliation_effects() const;
     [[nodiscard]] bool can_player_choose_team(std::string player_id) const;
     [[nodiscard]] bool can_player_acquire_weapon(std::string player_id, bool is_knife) const;
+    [[nodiscard]] KnifeKillResult player_killed(std::string victim_player_id,
+                                                std::string killer_player_id);
+    [[nodiscard]] KnifeKillResult force_knife_winner(std::string winner_player_id);
+    [[nodiscard]] TransitionResult knife_round_ended(bool generated_restart);
 
   private:
     [[nodiscard]] static bool is_legal_transition(Phase from, Phase to) noexcept;
@@ -112,6 +124,7 @@ class MatchEngine final {
     void commit_captains();
     void append_knife_reconciliation_effects(TransitionResult& result) const;
     [[nodiscard]] bool is_knife_phase() const noexcept;
+    [[nodiscard]] TransitionResult require_knife_replay();
 
     MatchState state_{};
 };

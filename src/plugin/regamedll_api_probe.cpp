@@ -17,6 +17,8 @@ IReGameApi* g_regamedll_api = nullptr;
 PlayerSpawnListener g_spawn_listener = nullptr;
 TeamChoiceListener g_team_choice_listener = nullptr;
 WeaponAcquireListener g_weapon_acquire_listener = nullptr;
+PlayerKilledListener g_player_killed_listener = nullptr;
+RoundEndListener g_round_end_listener = nullptr;
 bool g_gameplay_hooks_installed = false;
 
 void on_give_default_items(IReGameHook_CBasePlayer_GiveDefaultItems* chain, CBasePlayer* player) {
@@ -41,6 +43,26 @@ BOOL on_can_have_player_item(IReGameHook_CSGameRules_CanHavePlayerItem* chain, C
         return FALSE;
     }
     return chain->callNext(player, item);
+}
+
+void on_player_killed(IReGameHook_CSGameRules_PlayerKilled* chain, CBasePlayer* victim,
+                      entvars_t* killer, entvars_t* inflictor) {
+    if (g_player_killed_listener != nullptr && victim != nullptr) {
+        edict_t* killer_entity =
+            killer != nullptr && (killer->flags & FL_CLIENT) != 0 ? ENT(killer) : nullptr;
+        g_player_killed_listener(victim->edict(), killer_entity);
+    }
+    chain->callNext(victim, killer, inflictor);
+}
+
+bool on_round_end(IReGameHook_RoundEnd* chain, const int win_status,
+                  const ScenarioEventEndRound event, const float delay) {
+    const bool accepted = chain->callNext(win_status, event, delay);
+    if (accepted && g_round_end_listener != nullptr) {
+        const bool generated_restart = event == ROUND_GAME_RESTART || event == ROUND_GAME_COMMENCE;
+        g_round_end_listener(generated_restart);
+    }
+    return accepted;
 }
 
 } // namespace
@@ -122,9 +144,11 @@ bool ensure_regamedll_knife_loadout(edict_s* entity) noexcept {
     return player->CSPlayer()->GiveNamedItem("weapon_knife") != nullptr;
 }
 
-bool install_regamedll_gameplay_hooks(
-    const PlayerSpawnListener spawn_listener, const TeamChoiceListener team_choice_listener,
-    const WeaponAcquireListener weapon_acquire_listener) noexcept {
+bool install_regamedll_gameplay_hooks(const PlayerSpawnListener spawn_listener,
+                                      const TeamChoiceListener team_choice_listener,
+                                      const WeaponAcquireListener weapon_acquire_listener,
+                                      const PlayerKilledListener player_killed_listener,
+                                      const RoundEndListener round_end_listener) noexcept {
     if (g_regamedll_api == nullptr || g_regamedll_api->GetHookchains() == nullptr) {
         return false;
     }
@@ -132,12 +156,16 @@ bool install_regamedll_gameplay_hooks(
     g_spawn_listener = spawn_listener;
     g_team_choice_listener = team_choice_listener;
     g_weapon_acquire_listener = weapon_acquire_listener;
+    g_player_killed_listener = player_killed_listener;
+    g_round_end_listener = round_end_listener;
     if (!g_gameplay_hooks_installed) {
         auto* hooks = g_regamedll_api->GetHookchains();
         hooks->CBasePlayer_GiveDefaultItems()->registerHook(on_give_default_items);
         hooks->HandleMenu_ChooseTeam()->registerHook(on_choose_team, HC_PRIORITY_HIGH);
         hooks->CSGameRules_CanHavePlayerItem()->registerHook(on_can_have_player_item,
                                                              HC_PRIORITY_HIGH);
+        hooks->CSGameRules_PlayerKilled()->registerHook(on_player_killed, HC_PRIORITY_HIGH);
+        hooks->RoundEnd()->registerHook(on_round_end, HC_PRIORITY_HIGH);
         g_gameplay_hooks_installed = true;
     }
     return true;
@@ -150,11 +178,15 @@ void remove_regamedll_gameplay_hooks() noexcept {
         hooks->CBasePlayer_GiveDefaultItems()->unregisterHook(on_give_default_items);
         hooks->HandleMenu_ChooseTeam()->unregisterHook(on_choose_team);
         hooks->CSGameRules_CanHavePlayerItem()->unregisterHook(on_can_have_player_item);
+        hooks->CSGameRules_PlayerKilled()->unregisterHook(on_player_killed);
+        hooks->RoundEnd()->unregisterHook(on_round_end);
     }
     g_gameplay_hooks_installed = false;
     g_spawn_listener = nullptr;
     g_team_choice_listener = nullptr;
     g_weapon_acquire_listener = nullptr;
+    g_player_killed_listener = nullptr;
+    g_round_end_listener = nullptr;
 }
 
 } // namespace scrimmod::plugin

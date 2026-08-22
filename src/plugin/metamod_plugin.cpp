@@ -179,6 +179,33 @@ bool allow_weapon_acquisition(edict_t* entity, const bool is_knife) {
            g_match_engine.can_player_acquire_weapon(identity->player_id, is_knife);
 }
 
+void on_player_killed(edict_t* victim, edict_t* killer) {
+    const auto victim_identity = get_player_identity(victim, true);
+    const auto killer_identity = get_player_identity(killer, true);
+    const auto result =
+        g_match_engine.player_killed(victim_identity.has_value() ? victim_identity->player_id : "",
+                                     killer_identity.has_value() ? killer_identity->player_id : "");
+    apply_effects(result.effects);
+    switch (result.outcome) {
+    case scrimmod::core::KnifeKillOutcome::Ignored:
+        break;
+    case scrimmod::core::KnifeKillOutcome::WinnerDecided:
+        server_print("[ScrimMod] Knife winner recorded; entered KnifeComplete.\n");
+        break;
+    case scrimmod::core::KnifeKillOutcome::ReplayRequired:
+        server_print("[ScrimMod] Ambiguous knife kill; returned to KnifeSetup for replay.\n");
+        break;
+    }
+}
+
+void on_round_end(const bool generated_restart) {
+    const auto result = g_match_engine.knife_round_ended(generated_restart);
+    apply_effects(result.effects);
+    if (result.changed) {
+        server_print("[ScrimMod] Knife round ended without a winner; returned to KnifeSetup.\n");
+    }
+}
+
 void track_connected_player(edict_t* entity) {
     if (!g_match_engine.state().enabled() || entity == nullptr || entity->free != FALSE) {
         return;
@@ -192,9 +219,7 @@ void track_connected_player(edict_t* entity) {
     const char* name = g_engfuncs.pfnSzFromIndex(entity->v.netname);
     static_cast<void>(g_match_engine.player_connected(identity->player_id,
                                                       name != nullptr ? name : "", identity->type));
-    if (g_match_engine.state().phase() == scrimmod::core::Phase::KnifeSetup) {
-        apply_effects(g_match_engine.reconciliation_effects());
-    }
+    apply_effects(g_match_engine.reconciliation_effects());
 }
 
 void capture_connected_players() {
@@ -216,7 +241,14 @@ void on_client_disconnect(edict_t* entity) {
     if (g_match_engine.state().enabled() && entity != nullptr) {
         const auto identity = get_player_identity(entity, true);
         if (identity.has_value()) {
-            static_cast<void>(g_match_engine.player_disconnected(identity->player_id));
+            const auto previous_phase = g_match_engine.state().phase();
+            const auto result = g_match_engine.player_disconnected(identity->player_id);
+            apply_effects(result.effects);
+            if (previous_phase == scrimmod::core::Phase::KnifeLive &&
+                g_match_engine.state().phase() == scrimmod::core::Phase::KnifeSetup) {
+                server_print(
+                    "[ScrimMod] Captain disconnected; knife round paused at KnifeSetup.\n");
+            }
         }
     }
     RETURN_META(MRES_IGNORED);
@@ -298,6 +330,12 @@ void print_status() {
                                       : "CT";
         std::snprintf(status, sizeof(status), "Sides: Team A -> %s, Team B -> %s\n", team_a_side,
                       team_b_side);
+        server_print(status);
+    }
+    if (state.knife_winner_player_id().has_value()) {
+        std::snprintf(status, sizeof(status), "Knife Winner: %s\nKnife Loser: %s\n",
+                      state.knife_winner_player_id()->c_str(),
+                      state.knife_loser_player_id()->c_str());
         server_print(status);
     }
 }
@@ -525,6 +563,35 @@ void start_knife_round() {
     server_print("[ScrimMod] Knife round starting; queued sv_restart 1.\n");
 }
 
+void force_knife_winner() {
+    if (g_engfuncs.pfnCmd_Argc() != 2) {
+        server_print("Usage: scrim_knife_winner <player ID or exact name>\n");
+        return;
+    }
+
+    const char* target = g_engfuncs.pfnCmd_Argv(1);
+    auto result = g_match_engine.force_knife_winner(target != nullptr ? target : "");
+    if (result.outcome == scrimmod::core::KnifeKillOutcome::Ignored) {
+        bool ambiguous = false;
+        const std::string player_id = resolve_unique_player_name(target, ambiguous);
+        if (ambiguous) {
+            server_print("[ScrimMod] Player name is ambiguous; use the player ID.\n");
+            return;
+        }
+        if (!player_id.empty()) {
+            result = g_match_engine.force_knife_winner(player_id);
+        }
+    }
+
+    if (result.outcome != scrimmod::core::KnifeKillOutcome::WinnerDecided) {
+        server_print(
+            "[ScrimMod] Knife winner must be a selected captain during the knife phase.\n");
+        return;
+    }
+    apply_effects(result.effects);
+    server_print("[ScrimMod] Admin set the knife winner; entered KnifeComplete.\n");
+}
+
 } // namespace
 
 C_DLLEXPORT void WINAPI GiveFnptrsToDll(enginefuncs_t* engine_functions, globalvars_t* globals) {
@@ -587,7 +654,8 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS* function_table,
         return FALSE;
     }
     if (!scrimmod::plugin::install_gameplay_hooks(on_player_spawn, allow_team_choice,
-                                                  allow_weapon_acquisition)) {
+                                                  allow_weapon_acquisition, on_player_killed,
+                                                  on_round_end)) {
         server_print("[ScrimMod] Cannot load: failed to register ReGameDLL gameplay hooks.\n");
         scrimmod::plugin::remove_cvar_listener(g_scrim_enabled.name, apply_enabled_value);
         scrimmod::plugin::shutdown_server_apis();
@@ -604,6 +672,7 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS* function_table,
     g_engfuncs.pfnAddServerCommand("scrim_captain_clear", clear_captain);
     g_engfuncs.pfnAddServerCommand("scrim_captains_confirm", confirm_captains);
     g_engfuncs.pfnAddServerCommand("scrim_knife_start", start_knife_round);
+    g_engfuncs.pfnAddServerCommand("scrim_knife_winner", force_knife_winner);
     const cvar_t* registered_cvar = g_engfuncs.pfnCVarGetPointer(g_scrim_enabled.name);
     apply_enabled_value(registered_cvar != nullptr ? registered_cvar->string
                                                    : g_scrim_enabled.string);

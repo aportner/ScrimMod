@@ -59,6 +59,8 @@ class MatchState final {
     [[nodiscard]] const std::unordered_map<std::string, Player>& players() const noexcept;
     [[nodiscard]] bool eligible_pool_captured() const noexcept;
     [[nodiscard]] const std::vector<std::string>& eligible_players() const noexcept;
+    [[nodiscard]] const std::optional<std::string>& knife_winner_player_id() const noexcept;
+    [[nodiscard]] const std::optional<std::string>& knife_loser_player_id() const noexcept;
 
   private:
     friend class MatchEngine;
@@ -72,6 +74,8 @@ class MatchState final {
     std::unordered_map<std::string, Player> players_{};
     bool eligible_pool_captured_{false};
     std::vector<std::string> eligible_players_{};
+    std::optional<std::string> knife_winner_player_id_{};
+    std::optional<std::string> knife_loser_player_id_{};
 };
 
 } // namespace scrimmod::core

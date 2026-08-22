@@ -172,6 +172,16 @@ after default spawn equipment, prevents them from acquiring other weapons, and
 blocks tracked players from changing teams through the normal team menu. Weapon and
 team restrictions remain active throughout `KnifeSetup` and `KnifeLive`.
 
+A normal opposing-captain kill records the killer and victim by player ID and enters
+`KnifeComplete`; both appear in `scrim_status`. Suicide, world damage, an unexpected
+killer or victim, or a round ending without a recorded winner returns safely to
+`KnifeSetup`. Re-run `scrim_knife_start` to replay it. A captain disconnect during
+`KnifeLive` also pauses at `KnifeSetup` so the round can be restarted after the
+captain returns. ReGameDLL restart/commence round-end events are ignored explicitly.
+An administrator can resolve an exceptional result from `KnifeSetup` or `KnifeLive`
+with `scrim_knife_winner <player ID or exact name>`; the target must be one of the
+selected captains.
+
 ### Bot end-to-end testing
 
 Bots are excluded by default. Before enabling a scrim, opt them into tracking and the

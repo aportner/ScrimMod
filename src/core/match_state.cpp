@@ -56,6 +56,14 @@ const std::vector<std::string>& MatchState::eligible_players() const noexcept {
     return eligible_players_;
 }
 
+const std::optional<std::string>& MatchState::knife_winner_player_id() const noexcept {
+    return knife_winner_player_id_;
+}
+
+const std::optional<std::string>& MatchState::knife_loser_player_id() const noexcept {
+    return knife_loser_player_id_;
+}
+
 void MatchState::reset() noexcept {
     enabled_ = false;
     phase_ = Phase::Disabled;
@@ -64,6 +72,8 @@ void MatchState::reset() noexcept {
     players_.clear();
     eligible_pool_captured_ = false;
     eligible_players_.clear();
+    knife_winner_player_id_.reset();
+    knife_loser_player_id_.reset();
 }
 
 } // namespace scrimmod::core

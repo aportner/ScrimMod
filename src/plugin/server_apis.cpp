@@ -115,9 +115,12 @@ bool ensure_knife_loadout(edict_s* entity) noexcept {
 
 bool install_gameplay_hooks(const PlayerSpawnListener spawn_listener,
                             const TeamChoiceListener team_choice_listener,
-                            const WeaponAcquireListener weapon_acquire_listener) noexcept {
+                            const WeaponAcquireListener weapon_acquire_listener,
+                            const PlayerKilledListener player_killed_listener,
+                            const RoundEndListener round_end_listener) noexcept {
     return install_regamedll_gameplay_hooks(spawn_listener, team_choice_listener,
-                                            weapon_acquire_listener);
+                                            weapon_acquire_listener, player_killed_listener,
+                                            round_end_listener);
 }
 
 void remove_gameplay_hooks() noexcept { remove_regamedll_gameplay_hooks(); }

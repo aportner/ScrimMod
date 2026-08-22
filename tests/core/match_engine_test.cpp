@@ -19,6 +19,7 @@ int main() {
     using scrimmod::core::CaptainSelectionError;
     using scrimmod::core::EffectType;
     using scrimmod::core::EligibilityError;
+    using scrimmod::core::KnifeKillOutcome;
     using scrimmod::core::MatchEngine;
     using scrimmod::core::Phase;
     using scrimmod::core::PlayerType;
@@ -242,6 +243,41 @@ int main() {
             "knife start emits exactly one round restart");
     require(!engine.can_player_acquire_weapon("STEAM_0:1:10", false),
             "knife-only acquisition remains active during knife live");
+    const auto generated_restart_end = engine.knife_round_ended(true);
+    require(generated_restart_end.ok() && !generated_restart_end.changed,
+            "restart-generated round end is ignored");
+    require(engine.state().phase() == Phase::KnifeLive,
+            "generated restart does not alter knife phase");
+
+    const auto unexpected_round_end = engine.knife_round_ended(false);
+    require(unexpected_round_end.ok() && unexpected_round_end.changed,
+            "round ending without a kill requires replay");
+    require(engine.state().phase() == Phase::KnifeSetup,
+            "unexpected round end returns to knife setup");
+    require(engine.transition_to(Phase::KnifeLive).ok(),
+            "admin can restart knife after unexpected round end");
+
+    const auto ambiguous_kill = engine.player_killed("STEAM_0:1:10", "STEAM_0:1:10");
+    require(ambiguous_kill.outcome == KnifeKillOutcome::ReplayRequired,
+            "suicide requires an explicit knife replay");
+    require(engine.state().phase() == Phase::KnifeSetup,
+            "ambiguous knife result returns to knife setup");
+    require(!engine.state().knife_winner_player_id().has_value(),
+            "ambiguous knife result does not guess a winner");
+
+    require(engine.transition_to(Phase::KnifeLive).ok(),
+            "admin can restart knife round after ambiguity");
+    const auto clean_kill = engine.player_killed("STEAM_0:1:10", "STEAM_0:0:20");
+    require(clean_kill.outcome == KnifeKillOutcome::WinnerDecided,
+            "opposing captain kill decides knife winner");
+    require(engine.state().phase() == Phase::KnifeComplete,
+            "clean captain kill enters knife complete");
+    require(engine.state().knife_winner_player_id() == "STEAM_0:0:20",
+            "knife winner is stored by player ID");
+    require(engine.state().knife_loser_player_id() == "STEAM_0:1:10",
+            "knife loser is stored by player ID");
+    require(!engine.knife_round_ended(false).changed,
+            "round end after recorded winner does not invalidate result");
 
     const auto disabled = engine.set_enabled(false);
     require(disabled.ok() && disabled.changed, "disabling active engine changes state");
@@ -279,6 +315,17 @@ int main() {
             "eligible human can captain the other team");
     require(bot_engine.confirm_captains(scrimmod::core::Side::Terrorist).ok(),
             "bot captain can be confirmed through normal transition rules");
+    require(bot_engine.transition_to(Phase::KnifeLive).ok(), "bot knife round can start");
+    const auto bot_disconnect = bot_engine.player_disconnected("BOT:42");
+    require(bot_disconnect.ok() && bot_disconnect.changed,
+            "disconnecting bot captain updates player state");
+    require(bot_engine.state().phase() == Phase::KnifeSetup,
+            "captain disconnect pauses live knife round at setup");
+    const auto forced_bot_result = bot_engine.force_knife_winner("STEAM_0:1:77");
+    require(forced_bot_result.outcome == KnifeKillOutcome::WinnerDecided,
+            "admin can resolve disconnected bot captain from knife setup");
+    require(bot_engine.state().phase() == Phase::KnifeComplete,
+            "forced knife winner enters knife complete through central transition");
 
     std::cout << "All ScrimMod engine tests passed\n";
     return EXIT_SUCCESS;
