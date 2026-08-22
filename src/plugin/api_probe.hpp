@@ -16,5 +16,6 @@ void reset_rehlds_api() noexcept;
 void reset_regamedll_api() noexcept;
 [[nodiscard]] bool add_rehlds_cvar_listener(const char* name, CvarListener listener) noexcept;
 void remove_rehlds_cvar_listener(const char* name, CvarListener listener) noexcept;
+[[nodiscard]] bool assign_regamedll_player_team(edict_s* entity, ServerPlayerTeam team) noexcept;
 
 } // namespace scrimmod::plugin

@@ -156,8 +156,11 @@ scrim_captains_confirm
 
 Use `scrim_captain_clear a` or `scrim_captain_clear b` to clear a pending choice.
 Confirmation requires two different eligible players and advances the authoritative
-phase to `KnifeSetup`. Knife-round server reconciliation is the next implementation
-milestone; this checkpoint does not yet move players or enforce knife-only play.
+phase to `KnifeSetup`. It randomly assigns Team A and Team B to opposite CT/T sides,
+moves both captains through ReGameDLL's normal team-change path, and moves every
+other connected player to spectator. These placements are idempotently reconciled
+when another player connects. This checkpoint does not yet block subsequent manual
+team changes or enforce knife-only play.
 
 ### Bot end-to-end testing
 
@@ -166,6 +169,8 @@ initial eligible pool with:
 
 ```text
 scrim_allow_bots 1
+bot_add
+bot_add
 scrim_enabled 1
 ```
 

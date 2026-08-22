@@ -22,7 +22,7 @@ TransitionResult MatchEngine::set_enabled(const bool enabled) {
 
     result.changed = state_.enabled_ || state_.phase_ != Phase::Disabled;
     state_.reset();
-    result.effects.push_back({EffectType::ExecutePregameConfig});
+    result.effects.push_back({EffectType::ExecutePregameConfig, {}});
     return result;
 }
 
@@ -41,7 +41,8 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
     }
     if (state_.phase_ == Phase::CaptainSelection && target == Phase::KnifeSetup &&
         (!state_.team_a_.captain_player_id.has_value() ||
-         !state_.team_b_.captain_player_id.has_value())) {
+         !state_.team_b_.captain_player_id.has_value() ||
+         !state_.team_a_.current_side.has_value() || !state_.team_b_.current_side.has_value())) {
         result.error = TransitionError::PrerequisiteNotMet;
         return result;
     }
@@ -49,6 +50,7 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
     state_.phase_ = target;
     if (target == Phase::KnifeSetup) {
         commit_captains();
+        append_knife_setup_effects(result);
     }
     result.changed = true;
     return result;
@@ -282,6 +284,42 @@ CaptainSelectionResult MatchEngine::clear_captain(const LogicalTeam team) {
     return result;
 }
 
+TransitionResult MatchEngine::confirm_captains(const Side team_a_knife_side) {
+    TransitionResult rejected{};
+    if (!state_.enabled_) {
+        rejected.error = TransitionError::ScrimDisabled;
+        return rejected;
+    }
+    if (state_.phase_ != Phase::CaptainSelection) {
+        rejected.error = TransitionError::IllegalTransition;
+        return rejected;
+    }
+    if (!state_.team_a_.captain_player_id.has_value() ||
+        !state_.team_b_.captain_player_id.has_value()) {
+        rejected.error = TransitionError::PrerequisiteNotMet;
+        return rejected;
+    }
+
+    state_.team_a_.current_side = team_a_knife_side;
+    state_.team_b_.current_side =
+        team_a_knife_side == Side::Terrorist ? Side::CounterTerrorist : Side::Terrorist;
+    auto result = transition_to(Phase::KnifeSetup);
+    if (!result.ok()) {
+        state_.team_a_.current_side.reset();
+        state_.team_b_.current_side.reset();
+        return result;
+    }
+    return result;
+}
+
+std::vector<Effect> MatchEngine::reconciliation_effects() const {
+    TransitionResult result{};
+    if (state_.phase_ == Phase::KnifeSetup) {
+        append_knife_setup_effects(result);
+    }
+    return result.effects;
+}
+
 TeamState& MatchEngine::mutable_team(const LogicalTeam team) noexcept {
     return team == LogicalTeam::A ? state_.team_a_ : state_.team_b_;
 }
@@ -293,6 +331,34 @@ void MatchEngine::commit_captains() {
     state_.team_b_.roster = {captain_b};
     state_.players_.at(captain_a).logical_team = LogicalTeam::A;
     state_.players_.at(captain_b).logical_team = LogicalTeam::B;
+}
+
+void MatchEngine::append_knife_setup_effects(TransitionResult& result) const {
+    const std::string& captain_a = *state_.team_a_.captain_player_id;
+    const std::string& captain_b = *state_.team_b_.captain_player_id;
+    std::vector<std::string> connected_player_ids;
+    connected_player_ids.reserve(state_.players_.size());
+    for (const auto& [player_id, player] : state_.players_) {
+        if (!player.connected) {
+            continue;
+        }
+        connected_player_ids.push_back(player_id);
+    }
+    std::sort(connected_player_ids.begin(), connected_player_ids.end());
+
+    for (const auto& player_id : connected_player_ids) {
+        PlayerDestination destination = PlayerDestination::Spectator;
+        if (player_id == captain_a) {
+            destination = *state_.team_a_.current_side == Side::Terrorist
+                              ? PlayerDestination::Terrorist
+                              : PlayerDestination::CounterTerrorist;
+        } else if (player_id == captain_b) {
+            destination = *state_.team_b_.current_side == Side::Terrorist
+                              ? PlayerDestination::Terrorist
+                              : PlayerDestination::CounterTerrorist;
+        }
+        result.effects.push_back({EffectType::AssignPlayerTeam, player_id, destination});
+    }
 }
 
 bool MatchEngine::is_legal_transition(const Phase from, const Phase to) noexcept {

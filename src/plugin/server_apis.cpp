@@ -105,4 +105,8 @@ void remove_cvar_listener(const char* name, CvarListener listener) noexcept {
     remove_rehlds_cvar_listener(name, listener);
 }
 
+bool assign_player_team(edict_s* entity, const ServerPlayerTeam team) noexcept {
+    return assign_regamedll_player_team(entity, team);
+}
+
 } // namespace scrimmod::plugin

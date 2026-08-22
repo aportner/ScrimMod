@@ -1,5 +1,7 @@
 #pragma once
 
+struct edict_s;
+
 namespace scrimmod::plugin {
 
 enum class ApiError {
@@ -28,11 +30,13 @@ struct ApiStatus {
 };
 
 using CvarListener = void (*)(const char* new_value);
+enum class ServerPlayerTeam { Terrorist, CounterTerrorist, Spectator };
 
 [[nodiscard]] ApiStatus initialize_server_apis(const char* game_dll_path) noexcept;
 void shutdown_server_apis() noexcept;
 [[nodiscard]] const char* api_error_message(ApiError error) noexcept;
 [[nodiscard]] bool add_cvar_listener(const char* name, CvarListener listener) noexcept;
 void remove_cvar_listener(const char* name, CvarListener listener) noexcept;
+[[nodiscard]] bool assign_player_team(edict_s* entity, ServerPlayerTeam team) noexcept;
 
 } // namespace scrimmod::plugin

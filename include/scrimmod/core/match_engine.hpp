@@ -10,10 +10,15 @@ namespace scrimmod::core {
 
 enum class EffectType : std::uint8_t {
     ExecutePregameConfig,
+    AssignPlayerTeam,
 };
+
+enum class PlayerDestination : std::uint8_t { Terrorist, CounterTerrorist, Spectator };
 
 struct Effect {
     EffectType type;
+    std::string player_id;
+    PlayerDestination destination{PlayerDestination::Spectator};
 };
 
 enum class TransitionError : std::uint8_t {
@@ -93,12 +98,15 @@ class MatchEngine final {
     [[nodiscard]] EligibilityResult remove_eligible_player(std::string player_id);
     [[nodiscard]] CaptainSelectionResult select_captain(LogicalTeam team, std::string player_id);
     [[nodiscard]] CaptainSelectionResult clear_captain(LogicalTeam team);
+    [[nodiscard]] TransitionResult confirm_captains(Side team_a_knife_side);
+    [[nodiscard]] std::vector<Effect> reconciliation_effects() const;
 
   private:
     [[nodiscard]] static bool is_legal_transition(Phase from, Phase to) noexcept;
     [[nodiscard]] static std::string normalize_player_id(std::string player_id);
     [[nodiscard]] TeamState& mutable_team(LogicalTeam team) noexcept;
     void commit_captains();
+    void append_knife_setup_effects(TransitionResult& result) const;
 
     MatchState state_{};
 };

@@ -1,5 +1,6 @@
 #include "scrimmod/core/match_engine.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 
@@ -154,15 +155,22 @@ int main() {
     const auto clear_captain_b_again = engine.clear_captain(scrimmod::core::LogicalTeam::B);
     require(clear_captain_b_again.ok() && clear_captain_b_again.changed,
             "captain can be cleared before confirmation");
-    const auto incomplete_captains = engine.transition_to(Phase::KnifeSetup);
+    const auto incomplete_captains = engine.confirm_captains(scrimmod::core::Side::Terrorist);
     require(incomplete_captains.error == TransitionError::PrerequisiteNotMet,
             "knife setup requires two selected captains");
     require(engine.state().phase() == Phase::CaptainSelection,
             "failed captain confirmation leaves phase unchanged");
     require(engine.select_captain(scrimmod::core::LogicalTeam::B, "STEAM_0:0:20").ok(),
             "second captain can be restored before confirmation");
+    const auto missing_side_choice = engine.transition_to(Phase::KnifeSetup);
+    require(missing_side_choice.error == TransitionError::PrerequisiteNotMet,
+            "generic transition cannot bypass randomized starting-side selection");
+    require(engine.player_connected("STEAM_0:1:10", "Second Name").ok(),
+            "disconnected captain can reconnect before knife setup");
+    require(engine.player_connected("STEAM_0:0:30", "Spectator").ok(),
+            "non-captain can be tracked before knife setup");
 
-    const auto knife_setup = engine.transition_to(Phase::KnifeSetup);
+    const auto knife_setup = engine.confirm_captains(scrimmod::core::Side::CounterTerrorist);
     require(knife_setup.ok() && knife_setup.changed, "captain confirmation enters knife setup");
     require(engine.state().phase() == Phase::KnifeSetup,
             "captain confirmation updates the central phase");
@@ -176,6 +184,32 @@ int main() {
     require(engine.state().players().at("STEAM_0:0:20").logical_team ==
                 scrimmod::core::LogicalTeam::B,
             "confirmed Team B captain receives authoritative logical team");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).current_side ==
+                scrimmod::core::Side::CounterTerrorist,
+            "confirmation stores Team A knife side");
+    require(engine.state().team(scrimmod::core::LogicalTeam::B).current_side ==
+                scrimmod::core::Side::Terrorist,
+            "confirmation stores the opposite Team B knife side");
+    require(knife_setup.effects.size() == 3,
+            "knife setup emits one placement for each connected player");
+    const auto has_assignment =
+        [&knife_setup](const std::string& player_id,
+                       const scrimmod::core::PlayerDestination destination) {
+            return std::any_of(
+                knife_setup.effects.begin(), knife_setup.effects.end(), [&](const auto& effect) {
+                    return effect.type == EffectType::AssignPlayerTeam &&
+                           effect.player_id == player_id && effect.destination == destination;
+                });
+        };
+    require(has_assignment("STEAM_0:1:10", scrimmod::core::PlayerDestination::CounterTerrorist),
+            "Team A captain is assigned to randomized CT side");
+    require(has_assignment("STEAM_0:0:20", scrimmod::core::PlayerDestination::Terrorist),
+            "Team B captain is assigned to opposite T side");
+    require(has_assignment("STEAM_0:0:30", scrimmod::core::PlayerDestination::Spectator),
+            "non-captain is assigned to spectator");
+    const auto reconciliation = engine.reconciliation_effects();
+    require(reconciliation.size() == knife_setup.effects.size(),
+            "knife setup reconciliation reproduces every placement idempotently");
     require(engine.add_eligible_player("STEAM_0:1:10").error == EligibilityError::WrongPhase,
             "eligible roster cannot be changed after captain selection");
     require(engine.clear_captain(scrimmod::core::LogicalTeam::A).error ==
@@ -215,7 +249,7 @@ int main() {
             "eligible bot can be selected as captain");
     require(bot_engine.select_captain(scrimmod::core::LogicalTeam::B, "STEAM_0:1:77").ok(),
             "eligible human can captain the other team");
-    require(bot_engine.transition_to(Phase::KnifeSetup).ok(),
+    require(bot_engine.confirm_captains(scrimmod::core::Side::Terrorist).ok(),
             "bot captain can be confirmed through normal transition rules");
 
     std::cout << "All ScrimMod engine tests passed\n";

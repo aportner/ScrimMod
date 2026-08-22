@@ -67,16 +67,6 @@ void queue_pregame_config() {
     }
 }
 
-void apply_effects(const std::vector<scrimmod::core::Effect>& effects) {
-    for (const auto& effect : effects) {
-        switch (effect.type) {
-        case scrimmod::core::EffectType::ExecutePregameConfig:
-            queue_pregame_config();
-            break;
-        }
-    }
-}
-
 bool is_steam_player_id(const char* player_id) {
     if (player_id == nullptr || std::strncmp(player_id, "STEAM_", 6) != 0) {
         return false;
@@ -111,6 +101,54 @@ std::optional<ServerPlayerIdentity> get_player_identity(edict_t* entity, const b
     return std::nullopt;
 }
 
+edict_t* find_connected_entity(const std::string& player_id) {
+    if (gpGlobals == nullptr) {
+        return nullptr;
+    }
+    for (int index = 1; index <= gpGlobals->maxClients; ++index) {
+        edict_t* entity = g_engfuncs.pfnPEntityOfEntIndex(index);
+        const auto identity = get_player_identity(entity, true);
+        if (identity.has_value() && identity->player_id == player_id) {
+            return entity;
+        }
+    }
+    return nullptr;
+}
+
+scrimmod::plugin::ServerPlayerTeam
+server_team(const scrimmod::core::PlayerDestination destination) {
+    switch (destination) {
+    case scrimmod::core::PlayerDestination::Terrorist:
+        return scrimmod::plugin::ServerPlayerTeam::Terrorist;
+    case scrimmod::core::PlayerDestination::CounterTerrorist:
+        return scrimmod::plugin::ServerPlayerTeam::CounterTerrorist;
+    case scrimmod::core::PlayerDestination::Spectator:
+        return scrimmod::plugin::ServerPlayerTeam::Spectator;
+    }
+    return scrimmod::plugin::ServerPlayerTeam::Spectator;
+}
+
+void apply_effects(const std::vector<scrimmod::core::Effect>& effects) {
+    for (const auto& effect : effects) {
+        switch (effect.type) {
+        case scrimmod::core::EffectType::ExecutePregameConfig:
+            queue_pregame_config();
+            break;
+        case scrimmod::core::EffectType::AssignPlayerTeam: {
+            edict_t* entity = find_connected_entity(effect.player_id);
+            if (entity == nullptr) {
+                server_print("[ScrimMod] Player disconnected before team assignment; "
+                             "reconciliation deferred.\n");
+            } else if (!scrimmod::plugin::assign_player_team(entity,
+                                                             server_team(effect.destination))) {
+                server_print("[ScrimMod] ReGameDLL rejected a player team assignment.\n");
+            }
+            break;
+        }
+        }
+    }
+}
+
 void track_connected_player(edict_t* entity) {
     if (!g_match_engine.state().enabled() || entity == nullptr || entity->free != FALSE) {
         return;
@@ -124,6 +162,9 @@ void track_connected_player(edict_t* entity) {
     const char* name = g_engfuncs.pfnSzFromIndex(entity->v.netname);
     static_cast<void>(g_match_engine.player_connected(identity->player_id,
                                                       name != nullptr ? name : "", identity->type));
+    if (g_match_engine.state().phase() == scrimmod::core::Phase::KnifeSetup) {
+        apply_effects(g_match_engine.reconciliation_effects());
+    }
 }
 
 void capture_connected_players() {
@@ -213,6 +254,20 @@ void print_status() {
                                      : "disconnected";
         std::snprintf(status, sizeof(status), "Captain %c: %s [%s] - %s\n", team_name, name,
                       captain->c_str(), connection);
+        server_print(status);
+    }
+
+    if (state.team(scrimmod::core::LogicalTeam::A).current_side.has_value()) {
+        const char* team_a_side = *state.team(scrimmod::core::LogicalTeam::A).current_side ==
+                                          scrimmod::core::Side::Terrorist
+                                      ? "T"
+                                      : "CT";
+        const char* team_b_side = *state.team(scrimmod::core::LogicalTeam::B).current_side ==
+                                          scrimmod::core::Side::Terrorist
+                                      ? "T"
+                                      : "CT";
+        std::snprintf(status, sizeof(status), "Sides: Team A -> %s, Team B -> %s\n", team_a_side,
+                      team_b_side);
         server_print(status);
     }
 }
@@ -395,7 +450,11 @@ void confirm_captains() {
         return;
     }
 
-    const auto result = g_match_engine.transition_to(scrimmod::core::Phase::KnifeSetup);
+    const bool team_a_starts_ct =
+        g_engfuncs.pfnRandomLong != nullptr && g_engfuncs.pfnRandomLong(0, 1) != 0;
+    const auto result =
+        g_match_engine.confirm_captains(team_a_starts_ct ? scrimmod::core::Side::CounterTerrorist
+                                                         : scrimmod::core::Side::Terrorist);
     if (!result.ok()) {
         switch (result.error) {
         case scrimmod::core::TransitionError::ScrimDisabled:

@@ -50,4 +50,32 @@ ApiProbeResult probe_regamedll_api(void* module) noexcept {
 
 void reset_regamedll_api() noexcept { g_regamedll_api = nullptr; }
 
+bool assign_regamedll_player_team(edict_s* entity, const ServerPlayerTeam team) noexcept {
+    if (g_regamedll_api == nullptr || entity == nullptr) {
+        return false;
+    }
+
+    CBasePlayer* player = CBasePlayer::Instance(entity);
+    if (player == nullptr || player->CSPlayer() == nullptr) {
+        return false;
+    }
+
+    TeamName destination = SPECTATOR;
+    switch (team) {
+    case ServerPlayerTeam::Terrorist:
+        destination = TERRORIST;
+        break;
+    case ServerPlayerTeam::CounterTerrorist:
+        destination = CT;
+        break;
+    case ServerPlayerTeam::Spectator:
+        destination = SPECTATOR;
+        break;
+    }
+    if (player->m_iTeam == destination) {
+        return true;
+    }
+    return player->CSPlayer()->JoinTeam(destination);
+}
+
 } // namespace scrimmod::plugin
