@@ -809,8 +809,10 @@ compiled with GCC. AppleClang may be used to build and test the platform-indepen
 core during macOS development, but it is not the production plugin toolchain.
 
 Support for the original HLDS/GameDLL, Windows server binaries, and macOS server
-binaries is outside the initial scope. Dependency revisions should be pinned to
-known-good versions before the plugin adapter is implemented.
+binaries is outside the initial scope. Dependency revisions must be pinned to
+known-good versions. The initial empty adapter uses the official MetaMod-R example
+headers pinned in `cmake/dependencies.cmake`; direct ReHLDS and ReGameDLL API revisions
+must be pinned before those extended APIs are used.
 
 Development may occur on macOS. The platform-independent core and its unit tests
 must build and run there, while the actual plugin is compiled and integration-tested

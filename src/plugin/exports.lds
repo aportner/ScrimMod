@@ -1,0 +1,10 @@
+{
+    global:
+        GiveFnptrsToDll;
+        Meta_Query;
+        Meta_Attach;
+        Meta_Detach;
+        GetEntityAPI2;
+    local:
+        *;
+};
