@@ -37,19 +37,23 @@ ctest --test-dir build --output-on-failure
 
 Install GCC, CMake, Git, and the 32-bit C/C++ development libraries. On Debian or
 Ubuntu this generally includes `gcc-multilib`, `g++-multilib`, and `libc6-dev-i386`.
-Then configure with the checked-in toolchain:
+Then run the checked-in build wrapper:
 
 ```sh
-cmake -S . -B build-linux \
-  -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/linux-gcc-i386.cmake \
-  -DSCRIMMOD_BUILD_PLUGIN=ON \
-  -DCMAKE_BUILD_TYPE=Release
-cmake --build build-linux
-file build-linux/scrimmod_mm_i386.so
+./build-linux.sh
 ```
 
 The `file` output must identify a 32-bit Intel 80386 ELF shared object. CMake fetches
 the pinned official MetaMod-R source revision for its SDK headers during configure.
+The resulting plugin is `build/linux-release/scrimmod_mm_i386.so`.
+
+The equivalent individual preset commands are:
+
+```sh
+cmake --preset linux-release
+cmake --build --preset linux-release
+ctest --preset linux-release
+```
 
 ## Server smoke test
 
