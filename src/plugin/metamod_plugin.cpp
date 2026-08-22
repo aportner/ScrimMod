@@ -212,7 +212,8 @@ void on_player_killed(edict_t* victim, edict_t* killer) {
 
 void on_round_end(const scrimmod::plugin::RoundEndType type,
                   const scrimmod::plugin::RoundWinner winner) {
-    if (g_match_engine.state().phase() == scrimmod::core::Phase::RegulationFirstHalf) {
+    if (g_match_engine.state().phase() == scrimmod::core::Phase::RegulationFirstHalf ||
+        g_match_engine.state().phase() == scrimmod::core::Phase::RegulationSecondHalf) {
         if (type != scrimmod::plugin::RoundEndType::Gameplay) {
             return;
         }
@@ -227,20 +228,31 @@ void on_round_end(const scrimmod::plugin::RoundEndType type,
         if (result.outcome == scrimmod::core::RoundOutcome::Ambiguous) {
             server_print("[ScrimMod] Ambiguous live round result; score unchanged. Use "
                          "scrim_round_winner <a|b> for recovery.\n");
-        } else if (result.outcome == scrimmod::core::RoundOutcome::Counted ||
-                   result.outcome == scrimmod::core::RoundOutcome::HalfComplete) {
+        } else if (result.outcome != scrimmod::core::RoundOutcome::Ignored) {
             char score[128]{};
+            const char* suffix = "";
+            if (result.outcome == scrimmod::core::RoundOutcome::HalfComplete) {
+                suffix = "; halftime reached";
+            } else if (result.outcome == scrimmod::core::RoundOutcome::MatchComplete) {
+                suffix = "; match complete";
+            } else if (result.outcome == scrimmod::core::RoundOutcome::RegulationTied) {
+                suffix = "; regulation tied, overtime setup";
+            }
+            const auto& state = g_match_engine.state();
             std::snprintf(score, sizeof(score), "[ScrimMod] Score: Team A %d - %d Team B%s\n",
-                          g_match_engine.state().team(scrimmod::core::LogicalTeam::A).total_score,
-                          g_match_engine.state().team(scrimmod::core::LogicalTeam::B).total_score,
-                          result.outcome == scrimmod::core::RoundOutcome::HalfComplete
-                              ? "; halftime reached"
-                              : "");
+                          state.team(scrimmod::core::LogicalTeam::A).total_score,
+                          state.team(scrimmod::core::LogicalTeam::B).total_score, suffix);
             server_print(score);
             if (result.outcome == scrimmod::core::RoundOutcome::Counted &&
-                g_match_engine.state().period_rounds_completed() + 1 ==
-                    g_match_engine.state().regulation_rounds_per_half()) {
+                state.period_rounds_completed() + 1 == state.regulation_rounds_per_half()) {
                 server_print("[ScrimMod] *** LAST ROUND OF THE HALF - BUY OUT ***\n");
+            }
+            if (result.outcome == scrimmod::core::RoundOutcome::Counted &&
+                (state.team(scrimmod::core::LogicalTeam::A).total_score ==
+                     state.regulation_rounds_per_half() ||
+                 state.team(scrimmod::core::LogicalTeam::B).total_score ==
+                     state.regulation_rounds_per_half())) {
+                server_print("[ScrimMod] *** MATCH POINT ***\n");
             }
         }
         return;
@@ -1042,11 +1054,18 @@ void force_round_winner() {
     }
     apply_effects(result.effects);
     char score[128]{};
-    std::snprintf(
-        score, sizeof(score), "[ScrimMod] Admin score recovery: Team A %d - %d Team B%s\n",
-        g_match_engine.state().team(scrimmod::core::LogicalTeam::A).total_score,
-        g_match_engine.state().team(scrimmod::core::LogicalTeam::B).total_score,
-        result.outcome == scrimmod::core::RoundOutcome::HalfComplete ? "; halftime reached" : "");
+    const char* suffix = "";
+    if (result.outcome == scrimmod::core::RoundOutcome::HalfComplete) {
+        suffix = "; halftime reached";
+    } else if (result.outcome == scrimmod::core::RoundOutcome::MatchComplete) {
+        suffix = "; match complete";
+    } else if (result.outcome == scrimmod::core::RoundOutcome::RegulationTied) {
+        suffix = "; regulation tied, overtime setup";
+    }
+    std::snprintf(score, sizeof(score),
+                  "[ScrimMod] Admin score recovery: Team A %d - %d Team B%s\n",
+                  g_match_engine.state().team(scrimmod::core::LogicalTeam::A).total_score,
+                  g_match_engine.state().team(scrimmod::core::LogicalTeam::B).total_score, suffix);
     server_print(score);
 }
 

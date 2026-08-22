@@ -279,6 +279,15 @@ scrim_halftime_start
 The console/RCON command is also the explicit administrator override if the
 halftime sequence must proceed despite a disconnected captain.
 
+Second-half scoring continues from the preserved logical totals. A team wins
+regulation immediately upon reaching `scrim_rounds + 1`; ScrimMod then enters
+`MatchComplete` and rejects later round-end events. If the scheduled second half
+finishes with equal totals, ScrimMod enters the explicit `OvertimeSetup` checkpoint,
+executes `pregame.cfg`, and waits for the overtime configuration/start milestone.
+This prevents tied regulation from falling directly into live overtime without its
+own settings and restart sequence. Match-point and final-guaranteed-round warnings
+are announced when applicable.
+
 ### Bot end-to-end testing
 
 Bots are excluded by default. Before enabling a scrim, opt them into tracking and the

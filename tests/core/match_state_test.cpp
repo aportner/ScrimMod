@@ -29,6 +29,8 @@ int main() {
             "overtime phase has a stable display name");
     require(std::string{phase_name(Phase::LiveOnThree)} == "LiveOnThree",
             "LO3 phase has a stable display name");
+    require(std::string{phase_name(Phase::OvertimeSetup)} == "OvertimeSetup",
+            "overtime setup phase has a stable display name");
 
     require(state.players().empty(), "new match state has no players");
     require(state.team(LogicalTeam::A).roster.empty(), "new match state has empty Team A");

@@ -165,7 +165,14 @@ struct MatchConfigurationResult {
     [[nodiscard]] bool ok() const noexcept { return error == MatchConfigurationError::None; }
 };
 
-enum class RoundOutcome : std::uint8_t { Ignored, Counted, HalfComplete, Ambiguous };
+enum class RoundOutcome : std::uint8_t {
+    Ignored,
+    Counted,
+    HalfComplete,
+    MatchComplete,
+    RegulationTied,
+    Ambiguous,
+};
 
 struct RoundResult {
     RoundOutcome outcome{RoundOutcome::Ignored};

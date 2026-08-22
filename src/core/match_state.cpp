@@ -28,6 +28,8 @@ const char* phase_name(const Phase phase) noexcept {
         return "Halftime";
     case Phase::RegulationSecondHalf:
         return "RegulationSecondHalf";
+    case Phase::OvertimeSetup:
+        return "OvertimeSetup";
     case Phase::OvertimeFirstHalf:
         return "OvertimeFirstHalf";
     case Phase::OvertimeHalftime:

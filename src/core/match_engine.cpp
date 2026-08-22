@@ -83,6 +83,18 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
         result.error = TransitionError::PrerequisiteNotMet;
         return result;
     }
+    if (state_.phase_ == Phase::RegulationSecondHalf && target == Phase::MatchComplete &&
+        state_.team_a_.total_score < state_.regulation_rounds_per_half_ + 1 &&
+        state_.team_b_.total_score < state_.regulation_rounds_per_half_ + 1) {
+        result.error = TransitionError::PrerequisiteNotMet;
+        return result;
+    }
+    if (state_.phase_ == Phase::RegulationSecondHalf && target == Phase::OvertimeSetup &&
+        (state_.period_rounds_completed_ < state_.regulation_rounds_per_half_ ||
+         state_.team_a_.total_score != state_.team_b_.total_score)) {
+        result.error = TransitionError::PrerequisiteNotMet;
+        return result;
+    }
 
     const Phase previous_phase = state_.phase_;
     state_.phase_ = target;
@@ -129,6 +141,9 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
         state_.team_b_.captain_ready = false;
         state_.period_rounds_completed_ = 0;
         state_.live_on_three_target_phase_.reset();
+    } else if (target == Phase::OvertimeSetup) {
+        result.effects.push_back({EffectType::ExecutePregameConfig, {}});
+        append_draft_reconciliation_effects(result.effects);
     }
     result.changed = true;
     return result;
@@ -415,7 +430,8 @@ std::vector<Effect> MatchEngine::reconciliation_effects() const {
         append_knife_reconciliation_effects(result);
     } else if (state_.phase_ == Phase::Draft || state_.phase_ == Phase::Ready ||
                state_.phase_ == Phase::LiveOnThree || state_.phase_ == Phase::RegulationFirstHalf ||
-               state_.phase_ == Phase::Halftime || state_.phase_ == Phase::RegulationSecondHalf) {
+               state_.phase_ == Phase::Halftime || state_.phase_ == Phase::RegulationSecondHalf ||
+               state_.phase_ == Phase::OvertimeSetup) {
         append_draft_reconciliation_effects(result.effects);
     }
     return result.effects;
@@ -890,8 +906,9 @@ MatchConfigurationResult MatchEngine::set_regulation_rounds_per_half(const int r
     }
     if (state_.phase_ == Phase::LiveOnThree || state_.phase_ == Phase::RegulationFirstHalf ||
         state_.phase_ == Phase::Halftime || state_.phase_ == Phase::RegulationSecondHalf ||
-        state_.phase_ == Phase::OvertimeFirstHalf || state_.phase_ == Phase::OvertimeHalftime ||
-        state_.phase_ == Phase::OvertimeSecondHalf || state_.phase_ == Phase::MatchComplete) {
+        state_.phase_ == Phase::OvertimeSetup || state_.phase_ == Phase::OvertimeFirstHalf ||
+        state_.phase_ == Phase::OvertimeHalftime || state_.phase_ == Phase::OvertimeSecondHalf ||
+        state_.phase_ == Phase::MatchComplete) {
         result.error = MatchConfigurationError::WrongPhase;
         return result;
     }
@@ -907,7 +924,8 @@ MatchConfigurationResult MatchEngine::set_regulation_rounds_per_half(const int r
 }
 
 RoundResult MatchEngine::regulation_round_ended(const std::optional<Side> winning_side) {
-    if (state_.phase_ != Phase::RegulationFirstHalf) {
+    if (state_.phase_ != Phase::RegulationFirstHalf &&
+        state_.phase_ != Phase::RegulationSecondHalf) {
         return {};
     }
     if (!winning_side.has_value()) {
@@ -927,7 +945,8 @@ RoundResult MatchEngine::regulation_round_ended(const std::optional<Side> winnin
 }
 
 RoundResult MatchEngine::force_regulation_round_winner(const LogicalTeam winning_team) {
-    if (state_.phase_ != Phase::RegulationFirstHalf) {
+    if (state_.phase_ != Phase::RegulationFirstHalf &&
+        state_.phase_ != Phase::RegulationSecondHalf) {
         return {};
     }
     return count_regulation_round(winning_team);
@@ -1050,12 +1069,14 @@ TransitionResult MatchEngine::begin_live_on_three(const Phase target) {
 
 RoundResult MatchEngine::count_regulation_round(const LogicalTeam winning_team) {
     RoundResult result{};
+    const Phase period_phase = state_.phase_;
     TeamState& team = mutable_team(winning_team);
     ++team.total_score;
     ++team.period_score;
     ++state_.period_rounds_completed_;
     result.winning_team = winning_team;
-    if (state_.period_rounds_completed_ == state_.regulation_rounds_per_half_) {
+    if (period_phase == Phase::RegulationFirstHalf &&
+        state_.period_rounds_completed_ == state_.regulation_rounds_per_half_) {
         const auto halftime = transition_to(Phase::Halftime);
         result.outcome = halftime.ok() ? RoundOutcome::HalfComplete : RoundOutcome::Ambiguous;
         result.effects = halftime.effects;
@@ -1066,9 +1087,23 @@ RoundResult MatchEngine::count_regulation_round(const LogicalTeam winning_team) 
                                       live_on_three.effects.end());
             }
         }
-    } else {
-        result.outcome = RoundOutcome::Counted;
+        return result;
     }
+    if (period_phase == Phase::RegulationSecondHalf &&
+        team.total_score >= state_.regulation_rounds_per_half_ + 1) {
+        const auto complete = transition_to(Phase::MatchComplete);
+        result.outcome = complete.ok() ? RoundOutcome::MatchComplete : RoundOutcome::Ambiguous;
+        result.effects = complete.effects;
+        return result;
+    }
+    if (period_phase == Phase::RegulationSecondHalf &&
+        state_.period_rounds_completed_ == state_.regulation_rounds_per_half_) {
+        const auto overtime = transition_to(Phase::OvertimeSetup);
+        result.outcome = overtime.ok() ? RoundOutcome::RegulationTied : RoundOutcome::Ambiguous;
+        result.effects = overtime.effects;
+        return result;
+    }
+    result.outcome = RoundOutcome::Counted;
     return result;
 }
 
@@ -1081,7 +1116,7 @@ bool MatchEngine::are_team_changes_locked() const noexcept {
            state_.phase_ == Phase::SideOrPick || state_.phase_ == Phase::Draft ||
            state_.phase_ == Phase::Ready || state_.phase_ == Phase::LiveOnThree ||
            state_.phase_ == Phase::RegulationFirstHalf || state_.phase_ == Phase::Halftime ||
-           state_.phase_ == Phase::RegulationSecondHalf;
+           state_.phase_ == Phase::RegulationSecondHalf || state_.phase_ == Phase::OvertimeSetup;
 }
 
 TransitionResult MatchEngine::require_knife_replay() {
@@ -1116,7 +1151,9 @@ bool MatchEngine::is_legal_transition(const Phase from, const Phase to) noexcept
     case Phase::Halftime:
         return to == Phase::LiveOnThree;
     case Phase::RegulationSecondHalf:
-        return to == Phase::OvertimeFirstHalf || to == Phase::MatchComplete;
+        return to == Phase::OvertimeSetup || to == Phase::MatchComplete;
+    case Phase::OvertimeSetup:
+        return to == Phase::OvertimeFirstHalf;
     case Phase::OvertimeFirstHalf:
         return to == Phase::OvertimeHalftime;
     case Phase::OvertimeHalftime:

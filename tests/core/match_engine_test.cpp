@@ -640,6 +640,35 @@ int main() {
                 engine.state().team(scrimmod::core::LogicalTeam::B).period_score == 0 &&
                 engine.state().period_rounds_completed() == 0,
             "second-half entry resets only the current-period score and round count");
+    require(engine.transition_to(Phase::MatchComplete).error == TransitionError::PrerequisiteNotMet,
+            "second half cannot declare a winner before match point is won");
+    require(engine.transition_to(Phase::OvertimeSetup).error == TransitionError::PrerequisiteNotMet,
+            "second half cannot enter overtime before scheduled tied regulation completes");
+    const auto second_half_b_one =
+        engine.regulation_round_ended(scrimmod::core::Side::CounterTerrorist);
+    require(second_half_b_one.outcome == RoundOutcome::Counted &&
+                second_half_b_one.winning_team == scrimmod::core::LogicalTeam::B,
+            "second-half CT win maps through switched sides to logical Team B");
+    const auto second_half_b_two =
+        engine.regulation_round_ended(scrimmod::core::Side::CounterTerrorist);
+    require(second_half_b_two.outcome == RoundOutcome::Counted &&
+                engine.state().team(scrimmod::core::LogicalTeam::B).total_score == 3,
+            "second-half score continues from preserved first-half totals");
+    const auto regulation_tie = engine.regulation_round_ended(scrimmod::core::Side::Terrorist);
+    require(regulation_tie.outcome == RoundOutcome::RegulationTied &&
+                engine.state().phase() == Phase::OvertimeSetup,
+            "scheduled second half ending level enters explicit OvertimeSetup");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).total_score == 3 &&
+                engine.state().team(scrimmod::core::LogicalTeam::B).total_score == 3,
+            "tied regulation preserves authoritative logical totals");
+    require(!regulation_tie.effects.empty() &&
+                regulation_tie.effects.front().type == EffectType::ExecutePregameConfig,
+            "OvertimeSetup restores pregame configuration before overtime starts");
+    require(engine.regulation_round_ended(scrimmod::core::Side::Terrorist).outcome ==
+                RoundOutcome::Ignored,
+            "round events cannot count while waiting in OvertimeSetup");
+    require(!engine.can_player_choose_team("STEAM_0:0:60"),
+            "OvertimeSetup retains authoritative team lock");
 
     const auto disabled = engine.set_enabled(false);
     require(disabled.ok() && disabled.changed, "disabling active engine changes state");
@@ -764,6 +793,34 @@ int main() {
     require(empty_draft_engine.confirm_starting_side().ok() &&
                 empty_draft_engine.state().phase() == Phase::Ready,
             "a captain-only roster skips empty Draft work and enters Ready");
+    require(empty_draft_engine.set_regulation_rounds_per_half(1).ok(),
+            "short regulation match can be configured for match-win boundary testing");
+    require(empty_draft_engine.set_captain_ready("STEAM_0:1:91", true).ok() &&
+                empty_draft_engine.set_captain_ready("STEAM_0:1:92", true).ok(),
+            "short regulation captains can start first-half LO3");
+    require(empty_draft_engine.live_on_three_restart_completed().ok() &&
+                empty_draft_engine.live_on_three_restart_completed().ok() &&
+                empty_draft_engine.live_on_three_restart_completed().ok(),
+            "short regulation first-half LO3 completes");
+    require(
+        empty_draft_engine.regulation_round_ended(scrimmod::core::Side::CounterTerrorist).outcome ==
+            RoundOutcome::HalfComplete,
+        "one-round first half completes and starts halftime LO3");
+    require(empty_draft_engine.live_on_three_restart_completed().ok() &&
+                empty_draft_engine.live_on_three_restart_completed().ok() &&
+                empty_draft_engine.live_on_three_restart_completed().ok(),
+            "short regulation halftime LO3 completes");
+    const auto regulation_win =
+        empty_draft_engine.regulation_round_ended(scrimmod::core::Side::Terrorist);
+    require(regulation_win.outcome == RoundOutcome::MatchComplete &&
+                empty_draft_engine.state().phase() == Phase::MatchComplete,
+            "logical team reaching rounds-per-half plus one ends regulation immediately");
+    require(empty_draft_engine.state().team(scrimmod::core::LogicalTeam::A).total_score == 2 &&
+                empty_draft_engine.state().team(scrimmod::core::LogicalTeam::B).total_score == 0,
+            "early regulation winner retains correct logical final score");
+    require(empty_draft_engine.regulation_round_ended(scrimmod::core::Side::Terrorist).outcome ==
+                RoundOutcome::Ignored,
+            "post-match round events cannot alter the final score");
 
     std::cout << "All ScrimMod engine tests passed\n";
     return EXIT_SUCCESS;

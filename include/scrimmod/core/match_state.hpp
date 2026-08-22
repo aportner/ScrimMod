@@ -23,6 +23,7 @@ enum class Phase : std::uint8_t {
     RegulationFirstHalf,
     Halftime,
     RegulationSecondHalf,
+    OvertimeSetup,
     OvertimeFirstHalf,
     OvertimeHalftime,
     OvertimeSecondHalf,
