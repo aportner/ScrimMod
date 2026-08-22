@@ -116,7 +116,7 @@ if(SCRIMMOD_BUILD_PLUGIN)
     )
     install(
         TARGETS scrimmod_plugin
-        LIBRARY DESTINATION .
+        LIBRARY DESTINATION addons/ScrimMod
         COMPONENT plugin
     )
 endif()

@@ -22,7 +22,7 @@ if [[ ! -f "${scrimmod_artifact}" ]]; then
 fi
 
 cmake --install "${scrimmod_build_dir}" \
-    --prefix "${scrimmod_install_dir}" \
+    --prefix "${scrimmod_cstrike_dir}" \
     --component plugin
 
 if [[ ! -f "${scrimmod_install_dir}/scrimmod_mm_i386.so" ]]; then

@@ -76,6 +76,19 @@ Alternatively, set `SCRIMMOD_CSTRIKE_DIR`. The installed artifact is:
 cstrike/addons/ScrimMod/scrimmod_mm_i386.so
 ```
 
+The wrapper uses CMake's standard, generator-independent install command. Its direct
+equivalent is:
+
+```sh
+cmake --install build/linux-release \
+  --prefix "$HOME/hlds/cstrike" \
+  --component plugin
+```
+
+CMake also generates an `install` build target, but `cmake --install` is preferred
+because the deployment prefix can be supplied at install time and it works equally
+with Makefiles and Ninja.
+
 Add this line to `cstrike/addons/metamod/plugins.ini`:
 
 ```text
