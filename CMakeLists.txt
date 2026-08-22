@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+    message(FATAL_ERROR
+        "In-source builds are not supported. Remove the generated CMake files from "
+        "the repository root, then use ./build-linux.sh or configure with -B <build-dir>."
+    )
+endif()
+
 project(ScrimMod VERSION 0.1.0 LANGUAGES CXX)
 
 option(SCRIMMOD_BUILD_TESTS "Build platform-independent core tests" ON)
