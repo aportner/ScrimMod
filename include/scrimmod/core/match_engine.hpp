@@ -111,6 +111,26 @@ struct DecisionResult {
     [[nodiscard]] bool ok() const noexcept { return error == DecisionError::None; }
 };
 
+enum class DraftError : std::uint8_t {
+    None,
+    ScrimDisabled,
+    WrongPhase,
+    InvalidPlayerId,
+    UnknownPlayer,
+    IneligiblePlayer,
+    AlreadyDrafted,
+    ChoiceNotSelected,
+    CaptainDisconnected,
+};
+
+struct DraftResult {
+    DraftError error{DraftError::None};
+    bool changed{false};
+    std::vector<Effect> effects;
+
+    [[nodiscard]] bool ok() const noexcept { return error == DraftError::None; }
+};
+
 class MatchEngine final {
   public:
     [[nodiscard]] const MatchState& state() const noexcept;
@@ -137,6 +157,10 @@ class MatchEngine final {
     [[nodiscard]] DecisionResult confirm_knife_reward();
     [[nodiscard]] DecisionResult choose_starting_side(Side side);
     [[nodiscard]] DecisionResult confirm_starting_side();
+    [[nodiscard]] DraftResult set_draft_type(DraftType type);
+    [[nodiscard]] DraftResult choose_draft_player(std::string player_id,
+                                                  bool admin_override = false);
+    [[nodiscard]] DraftResult confirm_draft_player(bool admin_override = false);
 
   private:
     [[nodiscard]] static bool is_legal_transition(Phase from, Phase to) noexcept;
@@ -145,6 +169,8 @@ class MatchEngine final {
     void commit_captains();
     void append_knife_reconciliation_effects(TransitionResult& result) const;
     void append_draft_reconciliation_effects(std::vector<Effect>& effects) const;
+    void initialize_draft();
+    void advance_draft_turn();
     [[nodiscard]] bool is_knife_phase() const noexcept;
     [[nodiscard]] bool are_team_changes_locked() const noexcept;
     [[nodiscard]] TransitionResult require_knife_replay();

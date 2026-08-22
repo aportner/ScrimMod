@@ -57,6 +57,11 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
         result.error = TransitionError::PrerequisiteNotMet;
         return result;
     }
+    if (state_.phase_ == Phase::Draft && target == Phase::Ready &&
+        (!state_.available_draft_players_.empty() || state_.pending_draft_player_id_.has_value())) {
+        result.error = TransitionError::PrerequisiteNotMet;
+        return result;
+    }
 
     state_.phase_ = target;
     if (target == Phase::KnifeSetup) {
@@ -65,6 +70,11 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
     } else if (target == Phase::KnifeLive) {
         append_knife_reconciliation_effects(result);
         result.effects.push_back({EffectType::RestartRound, {}});
+    } else if (target == Phase::Draft) {
+        initialize_draft();
+    } else if (target == Phase::Ready) {
+        state_.current_draft_captain_player_id_.reset();
+        state_.draft_picks_remaining_in_turn_ = 0;
     }
     result.changed = true;
     return result;
@@ -335,7 +345,7 @@ std::vector<Effect> MatchEngine::reconciliation_effects() const {
     TransitionResult result{};
     if (is_knife_phase()) {
         append_knife_reconciliation_effects(result);
-    } else if (state_.phase_ == Phase::Draft) {
+    } else if (state_.phase_ == Phase::Draft || state_.phase_ == Phase::Ready) {
         append_draft_reconciliation_effects(result.effects);
     }
     return result.effects;
@@ -552,8 +562,139 @@ DecisionResult MatchEngine::confirm_starting_side() {
         result.error = DecisionError::RewardNotConfirmed;
         return result;
     }
+    if (state_.available_draft_players_.empty()) {
+        const auto ready = transition_to(Phase::Ready);
+        if (!ready.ok()) {
+            result.error = DecisionError::RewardNotConfirmed;
+            return result;
+        }
+    }
     result.changed = true;
     append_draft_reconciliation_effects(result.effects);
+    return result;
+}
+
+DraftResult MatchEngine::set_draft_type(const DraftType type) {
+    DraftResult result{};
+    if (!state_.enabled_) {
+        result.error = DraftError::ScrimDisabled;
+        return result;
+    }
+    if (state_.phase_ == Phase::Draft || state_.phase_ == Phase::Ready ||
+        state_.phase_ == Phase::RegulationFirstHalf || state_.phase_ == Phase::Halftime ||
+        state_.phase_ == Phase::RegulationSecondHalf || state_.phase_ == Phase::OvertimeFirstHalf ||
+        state_.phase_ == Phase::OvertimeHalftime || state_.phase_ == Phase::OvertimeSecondHalf ||
+        state_.phase_ == Phase::MatchComplete) {
+        result.error = DraftError::WrongPhase;
+        return result;
+    }
+    if (state_.draft_type_ != type) {
+        state_.draft_type_ = type;
+        result.changed = true;
+    }
+    return result;
+}
+
+DraftResult MatchEngine::choose_draft_player(std::string player_id, const bool admin_override) {
+    DraftResult result{};
+    if (!state_.enabled_) {
+        result.error = DraftError::ScrimDisabled;
+        return result;
+    }
+    if (state_.phase_ != Phase::Draft) {
+        result.error = DraftError::WrongPhase;
+        return result;
+    }
+    const auto captain = state_.players_.find(*state_.current_draft_captain_player_id_);
+    if (!admin_override && (captain == state_.players_.end() || !captain->second.connected)) {
+        result.error = DraftError::CaptainDisconnected;
+        return result;
+    }
+
+    player_id = normalize_player_id(std::move(player_id));
+    if (player_id.empty()) {
+        result.error = DraftError::InvalidPlayerId;
+        return result;
+    }
+    if (state_.players_.find(player_id) == state_.players_.end()) {
+        result.error = DraftError::UnknownPlayer;
+        return result;
+    }
+    if (std::find(state_.drafted_players_.begin(), state_.drafted_players_.end(), player_id) !=
+        state_.drafted_players_.end()) {
+        result.error = DraftError::AlreadyDrafted;
+        return result;
+    }
+    if (!std::binary_search(state_.available_draft_players_.begin(),
+                            state_.available_draft_players_.end(), player_id)) {
+        result.error = DraftError::IneligiblePlayer;
+        return result;
+    }
+    if (state_.pending_draft_player_id_ != player_id) {
+        state_.pending_draft_player_id_ = std::move(player_id);
+        result.changed = true;
+    }
+    return result;
+}
+
+DraftResult MatchEngine::confirm_draft_player(const bool admin_override) {
+    DraftResult result{};
+    if (!state_.enabled_) {
+        result.error = DraftError::ScrimDisabled;
+        return result;
+    }
+    if (state_.phase_ != Phase::Draft) {
+        result.error = DraftError::WrongPhase;
+        return result;
+    }
+    const auto captain = state_.players_.find(*state_.current_draft_captain_player_id_);
+    if (!admin_override && (captain == state_.players_.end() || !captain->second.connected)) {
+        result.error = DraftError::CaptainDisconnected;
+        return result;
+    }
+    if (!state_.pending_draft_player_id_.has_value()) {
+        result.error = DraftError::ChoiceNotSelected;
+        return result;
+    }
+
+    const std::string player_id = *state_.pending_draft_player_id_;
+    const auto available = std::lower_bound(state_.available_draft_players_.begin(),
+                                            state_.available_draft_players_.end(), player_id);
+    if (available == state_.available_draft_players_.end() || *available != player_id) {
+        result.error = DraftError::IneligiblePlayer;
+        return result;
+    }
+
+    LogicalTeam drafting_team;
+    if (state_.team_a_.captain_player_id == state_.current_draft_captain_player_id_) {
+        drafting_team = LogicalTeam::A;
+    } else if (state_.team_b_.captain_player_id == state_.current_draft_captain_player_id_) {
+        drafting_team = LogicalTeam::B;
+    } else {
+        result.error = DraftError::WrongPhase;
+        return result;
+    }
+
+    state_.available_draft_players_.erase(available);
+    state_.drafted_players_.push_back(player_id);
+    state_.pending_draft_player_id_.reset();
+    state_.players_.at(player_id).logical_team = drafting_team;
+    mutable_team(drafting_team).roster.push_back(player_id);
+    if (state_.players_.at(player_id).connected) {
+        const Side side = *mutable_team(drafting_team).current_side;
+        const PlayerDestination destination = side == Side::Terrorist
+                                                  ? PlayerDestination::Terrorist
+                                                  : PlayerDestination::CounterTerrorist;
+        result.effects.push_back({EffectType::AssignPlayerTeam, player_id, destination});
+    }
+    result.changed = true;
+
+    if (state_.available_draft_players_.empty()) {
+        const auto ready = transition_to(Phase::Ready);
+        result.effects.insert(result.effects.end(), ready.effects.begin(), ready.effects.end());
+    } else {
+        advance_draft_turn();
+    }
     return result;
 }
 
@@ -614,17 +755,48 @@ void MatchEngine::append_draft_reconciliation_effects(std::vector<Effect>& effec
 
     for (const auto& player_id : connected_player_ids) {
         PlayerDestination destination = PlayerDestination::Spectator;
-        if (state_.team_a_.captain_player_id == player_id) {
-            destination = *state_.team_a_.starting_side == Side::Terrorist
+        const auto& player = state_.players_.at(player_id);
+        if (player.logical_team == LogicalTeam::A) {
+            destination = *state_.team_a_.current_side == Side::Terrorist
                               ? PlayerDestination::Terrorist
                               : PlayerDestination::CounterTerrorist;
-        } else if (state_.team_b_.captain_player_id == player_id) {
-            destination = *state_.team_b_.starting_side == Side::Terrorist
+        } else if (player.logical_team == LogicalTeam::B) {
+            destination = *state_.team_b_.current_side == Side::Terrorist
                               ? PlayerDestination::Terrorist
                               : PlayerDestination::CounterTerrorist;
         }
         effects.push_back({EffectType::AssignPlayerTeam, player_id, destination});
     }
+}
+
+void MatchEngine::initialize_draft() {
+    state_.available_draft_players_.clear();
+    state_.drafted_players_.clear();
+    state_.pending_draft_player_id_.reset();
+    for (const auto& player_id : state_.eligible_players_) {
+        if (state_.team_a_.captain_player_id != player_id &&
+            state_.team_b_.captain_player_id != player_id) {
+            state_.available_draft_players_.push_back(player_id);
+        }
+    }
+    state_.current_draft_captain_player_id_ = state_.first_picker_player_id_;
+    state_.draft_picks_remaining_in_turn_ = state_.available_draft_players_.empty() ? 0 : 1;
+}
+
+void MatchEngine::advance_draft_turn() {
+    if (state_.draft_type_ == DraftType::Snake && state_.draft_picks_remaining_in_turn_ > 1) {
+        --state_.draft_picks_remaining_in_turn_;
+        return;
+    }
+
+    if (state_.current_draft_captain_player_id_ == state_.team_a_.captain_player_id) {
+        state_.current_draft_captain_player_id_ = state_.team_b_.captain_player_id;
+    } else {
+        state_.current_draft_captain_player_id_ = state_.team_a_.captain_player_id;
+    }
+    const int turn_length = state_.draft_type_ == DraftType::Snake ? 2 : 1;
+    state_.draft_picks_remaining_in_turn_ =
+        std::min(turn_length, static_cast<int>(state_.available_draft_players_.size()));
 }
 
 bool MatchEngine::is_knife_phase() const noexcept {
@@ -633,7 +805,8 @@ bool MatchEngine::is_knife_phase() const noexcept {
 
 bool MatchEngine::are_team_changes_locked() const noexcept {
     return is_knife_phase() || state_.phase_ == Phase::KnifeComplete ||
-           state_.phase_ == Phase::SideOrPick || state_.phase_ == Phase::Draft;
+           state_.phase_ == Phase::SideOrPick || state_.phase_ == Phase::Draft ||
+           state_.phase_ == Phase::Ready;
 }
 
 TransitionResult MatchEngine::require_knife_replay() {

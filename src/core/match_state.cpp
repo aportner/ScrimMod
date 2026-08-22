@@ -84,6 +84,28 @@ const std::optional<Side>& MatchState::pending_starting_side() const noexcept {
     return pending_starting_side_;
 }
 
+DraftType MatchState::draft_type() const noexcept { return draft_type_; }
+
+const std::optional<std::string>& MatchState::current_draft_captain_player_id() const noexcept {
+    return current_draft_captain_player_id_;
+}
+
+int MatchState::draft_picks_remaining_in_turn() const noexcept {
+    return draft_picks_remaining_in_turn_;
+}
+
+const std::vector<std::string>& MatchState::available_draft_players() const noexcept {
+    return available_draft_players_;
+}
+
+const std::vector<std::string>& MatchState::drafted_players() const noexcept {
+    return drafted_players_;
+}
+
+const std::optional<std::string>& MatchState::pending_draft_player_id() const noexcept {
+    return pending_draft_player_id_;
+}
+
 void MatchState::reset() noexcept {
     enabled_ = false;
     phase_ = Phase::Disabled;
@@ -99,6 +121,12 @@ void MatchState::reset() noexcept {
     first_picker_player_id_.reset();
     side_chooser_player_id_.reset();
     pending_starting_side_.reset();
+    draft_type_ = DraftType::Snake;
+    current_draft_captain_player_id_.reset();
+    draft_picks_remaining_in_turn_ = 0;
+    available_draft_players_.clear();
+    drafted_players_.clear();
+    pending_draft_player_id_.reset();
 }
 
 } // namespace scrimmod::core

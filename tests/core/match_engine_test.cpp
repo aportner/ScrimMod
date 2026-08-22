@@ -18,6 +18,8 @@ void require(const bool condition, const char* message) {
 int main() {
     using scrimmod::core::CaptainSelectionError;
     using scrimmod::core::DecisionError;
+    using scrimmod::core::DraftError;
+    using scrimmod::core::DraftType;
     using scrimmod::core::EffectType;
     using scrimmod::core::EligibilityError;
     using scrimmod::core::KnifeKillOutcome;
@@ -172,6 +174,17 @@ int main() {
             "disconnected captain can reconnect before knife setup");
     require(engine.player_connected("STEAM_0:0:30", "Spectator").ok(),
             "non-captain can be tracked before knife setup");
+    require(engine.player_connected("STEAM_0:0:40", "Fourth Player").ok(),
+            "additional draft candidate can be tracked");
+    require(engine.player_connected("STEAM_0:0:50", "Fifth Player").ok(),
+            "disconnection draft candidate can be tracked");
+    require(engine.player_connected("STEAM_0:0:60", "Sixth Player").ok(),
+            "final draft candidate can be tracked");
+    for (const auto* player_id : {"STEAM_0:0:30", "STEAM_0:0:40", "STEAM_0:0:50", "STEAM_0:0:60"}) {
+        require(engine.add_eligible_player(player_id).ok(),
+                "admin can explicitly add a pre-knife draft candidate");
+    }
+    require(engine.set_draft_type(DraftType::AB).ok(), "draft type can be configured before Draft");
 
     const auto knife_setup = engine.confirm_captains(scrimmod::core::Side::CounterTerrorist);
     require(knife_setup.ok() && knife_setup.changed, "captain confirmation enters knife setup");
@@ -193,7 +206,7 @@ int main() {
     require(engine.state().team(scrimmod::core::LogicalTeam::B).current_side ==
                 scrimmod::core::Side::Terrorist,
             "confirmation stores the opposite Team B knife side");
-    require(knife_setup.effects.size() == 5,
+    require(knife_setup.effects.size() == 8,
             "knife setup emits placements plus both captain loadouts");
     const auto has_assignment =
         [&knife_setup](const std::string& player_id,
@@ -334,6 +347,14 @@ int main() {
             "starting-side confirmation completes the decision checkpoint");
     require(engine.state().phase() == Phase::Draft,
             "confirmed starting side advances centrally into Draft");
+    require(engine.state().draft_type() == DraftType::AB,
+            "configured draft type is retained on Draft entry");
+    require(engine.state().current_draft_captain_player_id() == "STEAM_0:0:20",
+            "knife reward determines the explicit first draft captain");
+    require(engine.state().draft_picks_remaining_in_turn() == 1,
+            "AB draft begins with one pick in the turn");
+    require(engine.state().available_draft_players().size() == 4,
+            "Draft entry explicitly captures eligible non-captains as available");
     require(engine.state().team(scrimmod::core::LogicalTeam::A).starting_side ==
                 scrimmod::core::Side::CounterTerrorist,
             "side chooser's logical team explicitly stores its regulation starting side");
@@ -361,6 +382,77 @@ int main() {
     require(engine.reconciliation_effects().size() == starting_side.effects.size(),
             "Draft entry placement can be reconciled idempotently");
 
+    require(engine.set_draft_type(DraftType::Snake).error == DraftError::WrongPhase,
+            "draft type cannot change after Draft begins");
+    require(engine.confirm_draft_player().error == DraftError::ChoiceNotSelected,
+            "draft pick requires an explicit pending selection");
+    require(engine.choose_draft_player("STEAM_0:1:999").error == DraftError::UnknownPlayer,
+            "unknown player cannot be drafted");
+    require(engine.choose_draft_player("STEAM_0:1:10").error == DraftError::IneligiblePlayer,
+            "captain cannot be selected from the available draft pool");
+    const auto pending_pick = engine.choose_draft_player("STEAM_0:0:30");
+    require(pending_pick.ok() && pending_pick.changed,
+            "available player can be selected as a pending pick");
+    require(engine.state().pending_draft_player_id() == "STEAM_0:0:30",
+            "pending draft pick is stored by stable player ID");
+    require(!engine.choose_draft_player("STEAM_0:0:30").changed,
+            "repeating a pending pick is idempotent");
+    const auto first_pick = engine.confirm_draft_player();
+    require(first_pick.ok() && first_pick.changed, "pending draft pick can be confirmed");
+    require(engine.state().players().at("STEAM_0:0:30").logical_team ==
+                scrimmod::core::LogicalTeam::B,
+            "first pick joins the first captain's authoritative logical team");
+    require(engine.state().current_draft_captain_player_id() == "STEAM_0:1:10",
+            "AB draft alternates to the other captain after one pick");
+    require(first_pick.effects.size() == 1 && first_pick.effects.front().destination ==
+                                                  scrimmod::core::PlayerDestination::Terrorist,
+            "connected drafted player is moved to the drafting team's current side");
+    require(engine.choose_draft_player("STEAM_0:0:30").error == DraftError::AlreadyDrafted,
+            "confirmed player cannot be drafted twice");
+
+    require(engine.player_disconnected("STEAM_0:1:10").ok(),
+            "current captain may disconnect during Draft");
+    require(engine.choose_draft_player("STEAM_0:0:40").error == DraftError::CaptainDisconnected,
+            "ordinary draft selection pauses while the current captain is disconnected");
+    require(engine.choose_draft_player("STEAM_0:0:40", true).ok(),
+            "explicit administrator override can recover a disconnected captain's turn");
+    require(engine.confirm_draft_player().error == DraftError::CaptainDisconnected,
+            "ordinary draft confirmation also pauses for a disconnected captain");
+    require(engine.player_connected("STEAM_0:1:10", "Second Name").ok(),
+            "current captain can reconnect before pick confirmation");
+
+    require(engine.player_disconnected("STEAM_0:0:50").ok(),
+            "unpicked candidate may disconnect during Draft");
+    require(std::binary_search(engine.state().available_draft_players().begin(),
+                               engine.state().available_draft_players().end(),
+                               std::string("STEAM_0:0:50")),
+            "disconnected unpicked player remains available");
+    require(engine.confirm_draft_player().ok(), "Team A AB pick confirms");
+    require(engine.state().current_draft_captain_player_id() == "STEAM_0:0:20",
+            "AB draft returns to Team B after Team A's pick");
+    require(engine.choose_draft_player("STEAM_0:0:50").ok(),
+            "disconnected available player can still be selected");
+    const auto disconnected_pick = engine.confirm_draft_player();
+    require(disconnected_pick.ok() && disconnected_pick.effects.empty(),
+            "disconnected drafted player retains assignment without a server move");
+    require(engine.state().players().at("STEAM_0:0:50").logical_team ==
+                scrimmod::core::LogicalTeam::B,
+            "disconnected drafted player receives a persistent logical team");
+    require(engine.choose_draft_player("STEAM_0:0:60").ok(),
+            "last available player can be selected");
+    const auto final_pick = engine.confirm_draft_player();
+    require(final_pick.ok() && engine.state().phase() == Phase::Ready,
+            "final confirmed pick automatically advances to Ready");
+    require(engine.state().available_draft_players().empty(),
+            "completed draft has no available players");
+    require(engine.state().drafted_players().size() == 4,
+            "completed draft explicitly records every drafted player");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).roster.size() == 3 &&
+                engine.state().team(scrimmod::core::LogicalTeam::B).roster.size() == 3,
+            "AB draft produces the expected balanced logical rosters");
+    require(!engine.can_player_choose_team("STEAM_0:0:60"),
+            "Ready keeps authoritative team placement locked");
+
     const auto disabled = engine.set_enabled(false);
     require(disabled.ok() && disabled.changed, "disabling active engine changes state");
     require(!engine.state().enabled(), "disable clears enabled state");
@@ -374,6 +466,9 @@ int main() {
             "disable clears side-chooser decision state");
     require(!engine.state().team(scrimmod::core::LogicalTeam::A).starting_side.has_value(),
             "disable clears regulation starting sides");
+    require(engine.state().available_draft_players().empty(),
+            "disable clears available draft state");
+    require(engine.state().drafted_players().empty(), "disable clears drafted-player history");
     require(engine.can_player_choose_team("STEAM_0:1:10"),
             "disable removes team-choice restrictions");
     require(engine.can_player_acquire_weapon("STEAM_0:1:10", false),
@@ -394,6 +489,12 @@ int main() {
             "bot can be tracked with a synthetic player ID");
     require(bot_engine.player_connected("STEAM_0:1:77", "Human Captain").ok(),
             "human can be tracked alongside bot");
+    require(bot_engine.player_connected("BOT:43", "Draft Bot One", PlayerType::Bot).ok(),
+            "first bot draft candidate can be tracked");
+    require(bot_engine.player_connected("BOT:44", "Draft Bot Two", PlayerType::Bot).ok(),
+            "second bot draft candidate can be tracked");
+    require(bot_engine.player_connected("STEAM_0:1:88", "Draft Human").ok(),
+            "human draft candidate can be tracked");
     require(bot_engine.capture_eligible_players().ok(), "mixed eligible pool is captured");
     require(bot_engine.state().players().at("BOT:42").type == PlayerType::Bot,
             "core preserves explicit bot player type");
@@ -421,6 +522,57 @@ int main() {
             "knife winner becomes side chooser for the starting-side reward");
     require(bot_engine.state().first_picker_player_id() == "BOT:42",
             "knife loser receives first pick for the starting-side reward");
+    require(bot_engine.player_connected("BOT:42", "Test Bot", PlayerType::Bot).ok(),
+            "bot captain can reconnect before side confirmation");
+    require(bot_engine.choose_starting_side(scrimmod::core::Side::Terrorist).ok(),
+            "winning captain can choose a starting side");
+    require(bot_engine.confirm_starting_side().ok(),
+            "starting-side confirmation enters bot-capable Draft");
+    require(bot_engine.state().draft_type() == DraftType::Snake, "Snake is the default draft mode");
+    require(bot_engine.state().current_draft_captain_player_id() == "BOT:42" &&
+                bot_engine.state().draft_picks_remaining_in_turn() == 1,
+            "Snake starts with one pick for the first captain");
+    require(bot_engine.choose_draft_player("BOT:43").ok(),
+            "first captain can select the opening Snake pick");
+    require(bot_engine.confirm_draft_player().ok(), "opening Snake pick confirms");
+    require(bot_engine.state().current_draft_captain_player_id() == "STEAM_0:1:77" &&
+                bot_engine.state().draft_picks_remaining_in_turn() == 2,
+            "Snake switches to a two-pick turn for the other captain");
+    require(bot_engine.choose_draft_player("BOT:44").ok(),
+            "second captain can select the first pick of a pair");
+    require(bot_engine.confirm_draft_player().ok(), "first paired Snake pick confirms");
+    require(bot_engine.state().current_draft_captain_player_id() == "STEAM_0:1:77" &&
+                bot_engine.state().draft_picks_remaining_in_turn() == 1,
+            "Snake retains the same captain for the second paired pick");
+    require(bot_engine.choose_draft_player("STEAM_0:1:88").ok(),
+            "second captain can select the final paired pick");
+    require(bot_engine.confirm_draft_player().ok() && bot_engine.state().phase() == Phase::Ready,
+            "final Snake pick completes Draft and enters Ready");
+
+    MatchEngine empty_draft_engine;
+    require(empty_draft_engine.set_enabled(true).ok(), "empty-draft engine enables");
+    require(empty_draft_engine.player_connected("STEAM_0:1:91", "One").ok() &&
+                empty_draft_engine.player_connected("STEAM_0:1:92", "Two").ok(),
+            "empty-draft captains can be tracked");
+    require(empty_draft_engine.capture_eligible_players().ok(),
+            "empty-draft eligible pool is captured");
+    require(
+        empty_draft_engine.select_captain(scrimmod::core::LogicalTeam::A, "STEAM_0:1:91").ok() &&
+            empty_draft_engine.select_captain(scrimmod::core::LogicalTeam::B, "STEAM_0:1:92").ok(),
+        "empty-draft captains are selected");
+    require(empty_draft_engine.confirm_captains(scrimmod::core::Side::Terrorist).ok(),
+            "empty-draft captains confirm");
+    require(empty_draft_engine.force_knife_winner("STEAM_0:1:91").outcome ==
+                KnifeKillOutcome::WinnerDecided,
+            "empty-draft knife winner can be resolved");
+    require(
+        empty_draft_engine.choose_knife_reward(KnifeRewardChoice::StartingSide).ok() &&
+            empty_draft_engine.confirm_knife_reward().ok() &&
+            empty_draft_engine.choose_starting_side(scrimmod::core::Side::CounterTerrorist).ok(),
+        "empty-draft decisions can be completed");
+    require(empty_draft_engine.confirm_starting_side().ok() &&
+                empty_draft_engine.state().phase() == Phase::Ready,
+            "a captain-only roster skips empty Draft work and enters Ready");
 
     std::cout << "All ScrimMod engine tests passed\n";
     return EXIT_SUCCESS;

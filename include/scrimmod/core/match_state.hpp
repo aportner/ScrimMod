@@ -32,6 +32,7 @@ enum class LogicalTeam : std::uint8_t { A, B };
 enum class Side : std::uint8_t { Terrorist, CounterTerrorist };
 enum class PlayerType : std::uint8_t { Human, Bot };
 enum class KnifeRewardChoice : std::uint8_t { StartingSide, FirstPick };
+enum class DraftType : std::uint8_t { AB, Snake };
 
 [[nodiscard]] const char* phase_name(Phase phase) noexcept;
 
@@ -70,6 +71,13 @@ class MatchState final {
     [[nodiscard]] const std::optional<std::string>& first_picker_player_id() const noexcept;
     [[nodiscard]] const std::optional<std::string>& side_chooser_player_id() const noexcept;
     [[nodiscard]] const std::optional<Side>& pending_starting_side() const noexcept;
+    [[nodiscard]] DraftType draft_type() const noexcept;
+    [[nodiscard]] const std::optional<std::string>&
+    current_draft_captain_player_id() const noexcept;
+    [[nodiscard]] int draft_picks_remaining_in_turn() const noexcept;
+    [[nodiscard]] const std::vector<std::string>& available_draft_players() const noexcept;
+    [[nodiscard]] const std::vector<std::string>& drafted_players() const noexcept;
+    [[nodiscard]] const std::optional<std::string>& pending_draft_player_id() const noexcept;
 
   private:
     friend class MatchEngine;
@@ -90,6 +98,12 @@ class MatchState final {
     std::optional<std::string> first_picker_player_id_{};
     std::optional<std::string> side_chooser_player_id_{};
     std::optional<Side> pending_starting_side_{};
+    DraftType draft_type_{DraftType::Snake};
+    std::optional<std::string> current_draft_captain_player_id_{};
+    int draft_picks_remaining_in_turn_{0};
+    std::vector<std::string> available_draft_players_{};
+    std::vector<std::string> drafted_players_{};
+    std::optional<std::string> pending_draft_player_id_{};
 };
 
 } // namespace scrimmod::core

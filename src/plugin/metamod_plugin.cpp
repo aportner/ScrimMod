@@ -374,6 +374,40 @@ void print_status() {
                       team_b_side);
         server_print(status);
     }
+    std::snprintf(status, sizeof(status), "Draft Type: %s\n",
+                  state.draft_type() == scrimmod::core::DraftType::AB ? "AB" : "Snake");
+    server_print(status);
+    if (state.current_draft_captain_player_id().has_value()) {
+        std::snprintf(status, sizeof(status), "Current Draft Captain: %s\nPicks Remaining: %d\n",
+                      state.current_draft_captain_player_id()->c_str(),
+                      state.draft_picks_remaining_in_turn());
+        server_print(status);
+    }
+    if (state.pending_draft_player_id().has_value()) {
+        std::snprintf(status, sizeof(status), "Pending Draft Pick: %s\n",
+                      state.pending_draft_player_id()->c_str());
+        server_print(status);
+    }
+    if (!state.available_draft_players().empty()) {
+        server_print("Available Draft Players:\n");
+        for (const auto& player_id : state.available_draft_players()) {
+            const auto& player = state.players().at(player_id);
+            std::snprintf(status, sizeof(status), "  %s [%s]%s\n", player.last_known_name.c_str(),
+                          player_id.c_str(), player.connected ? "" : " (disconnected)");
+            server_print(status);
+        }
+    }
+    if (!state.drafted_players().empty()) {
+        server_print("Drafted Players:\n");
+        for (const auto& player_id : state.drafted_players()) {
+            const auto& player = state.players().at(player_id);
+            std::snprintf(status, sizeof(status), "  %s [%s] -> Team %c%s\n",
+                          player.last_known_name.c_str(), player_id.c_str(),
+                          player.logical_team == scrimmod::core::LogicalTeam::A ? 'A' : 'B',
+                          player.connected ? "" : " (disconnected)");
+            server_print(status);
+        }
+    }
 }
 
 const char* eligibility_error_message(const scrimmod::core::EligibilityError error) {
@@ -705,7 +739,103 @@ void confirm_starting_side() {
         return;
     }
     apply_effects(result.effects);
-    server_print("[ScrimMod] Starting side confirmed; captains placed and Draft entered.\n");
+    server_print(g_match_engine.state().phase() == scrimmod::core::Phase::Ready
+                     ? "[ScrimMod] Starting side confirmed; no draft picks remain, entered Ready.\n"
+                     : "[ScrimMod] Starting side confirmed; captains placed and Draft entered.\n");
+}
+
+void set_draft_type() {
+    if (g_engfuncs.pfnCmd_Argc() != 2) {
+        server_print("Usage: scrim_draft_type <ab|snake>\n");
+        return;
+    }
+    const char* value = g_engfuncs.pfnCmd_Argv(1);
+    scrimmod::core::DraftType type;
+    if (value != nullptr && std::strcmp(value, "ab") == 0) {
+        type = scrimmod::core::DraftType::AB;
+    } else if (value != nullptr && std::strcmp(value, "snake") == 0) {
+        type = scrimmod::core::DraftType::Snake;
+    } else {
+        server_print("Usage: scrim_draft_type <ab|snake>\n");
+        return;
+    }
+    const auto result = g_match_engine.set_draft_type(type);
+    if (!result.ok()) {
+        server_print("[ScrimMod] Draft type cannot be changed after Draft begins.\n");
+        return;
+    }
+    server_print(type == scrimmod::core::DraftType::AB ? "[ScrimMod] Draft type set to AB.\n"
+                                                       : "[ScrimMod] Draft type set to Snake.\n");
+}
+
+const char* draft_error_message(const scrimmod::core::DraftError error) {
+    using scrimmod::core::DraftError;
+    switch (error) {
+    case DraftError::None:
+        return "none";
+    case DraftError::ScrimDisabled:
+        return "ScrimMod is disabled";
+    case DraftError::WrongPhase:
+        return "draft picks can only be made during Draft";
+    case DraftError::InvalidPlayerId:
+        return "the player argument is empty";
+    case DraftError::UnknownPlayer:
+        return "no tracked player matches that player ID or exact name";
+    case DraftError::IneligiblePlayer:
+        return "that player is not available to draft";
+    case DraftError::AlreadyDrafted:
+        return "that player has already been drafted";
+    case DraftError::ChoiceNotSelected:
+        return "select a draft pick before confirming it";
+    case DraftError::CaptainDisconnected:
+        return "the current draft captain is disconnected";
+    }
+    return "unknown draft error";
+}
+
+void choose_draft_player() {
+    if (g_engfuncs.pfnCmd_Argc() != 2) {
+        server_print("Usage: scrim_pick <player ID or exact name>\n");
+        return;
+    }
+    const char* target = g_engfuncs.pfnCmd_Argv(1);
+    auto result = g_match_engine.choose_draft_player(target != nullptr ? target : "", true);
+    if (result.error == scrimmod::core::DraftError::UnknownPlayer) {
+        bool ambiguous = false;
+        const std::string player_id = resolve_unique_player_name(target, ambiguous);
+        if (ambiguous) {
+            server_print("[ScrimMod] Player name is ambiguous; use the player ID.\n");
+            return;
+        }
+        if (!player_id.empty()) {
+            result = g_match_engine.choose_draft_player(player_id, true);
+        }
+    }
+    if (!result.ok()) {
+        server_print("[ScrimMod] Cannot select draft pick: ");
+        server_print(draft_error_message(result.error));
+        server_print(".\n");
+        return;
+    }
+    server_print("[ScrimMod] Pending draft pick recorded; confirm it explicitly.\n");
+}
+
+void confirm_draft_player() {
+    if (g_engfuncs.pfnCmd_Argc() != 1) {
+        server_print("Usage: scrim_pick_confirm\n");
+        return;
+    }
+    const auto result = g_match_engine.confirm_draft_player(true);
+    if (!result.ok()) {
+        server_print("[ScrimMod] Cannot confirm draft pick: ");
+        server_print(draft_error_message(result.error));
+        server_print(".\n");
+        return;
+    }
+    apply_effects(result.effects);
+    server_print(g_match_engine.state().phase() == scrimmod::core::Phase::Ready
+                     ? "[ScrimMod] Draft complete; entered Ready.\n"
+                     : "[ScrimMod] Draft pick confirmed.\n");
 }
 
 } // namespace
@@ -793,6 +923,9 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS* function_table,
     g_engfuncs.pfnAddServerCommand("scrim_knife_choice_confirm", confirm_knife_reward);
     g_engfuncs.pfnAddServerCommand("scrim_starting_side", choose_starting_side);
     g_engfuncs.pfnAddServerCommand("scrim_starting_side_confirm", confirm_starting_side);
+    g_engfuncs.pfnAddServerCommand("scrim_draft_type", set_draft_type);
+    g_engfuncs.pfnAddServerCommand("scrim_pick", choose_draft_player);
+    g_engfuncs.pfnAddServerCommand("scrim_pick_confirm", confirm_draft_player);
     const cvar_t* registered_cvar = g_engfuncs.pfnCVarGetPointer(g_scrim_enabled.name);
     apply_enabled_value(registered_cvar != nullptr ? registered_cvar->string
                                                    : g_scrim_enabled.string);

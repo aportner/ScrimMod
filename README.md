@@ -201,6 +201,30 @@ moves the captains to those sides, keeps everyone else spectating, and advances 
 `Draft`. `scrim_status` shows pending and confirmed decisions. Team changes remain
 locked for tracked players throughout this checkpoint and Draft.
 
+Draft mode defaults to Snake. Set it before entering Draft if AB alternation is
+preferred:
+
+```text
+scrim_draft_type ab
+```
+
+During Draft, select an available player by normalized ID or unique exact name and
+confirm every pick:
+
+```text
+scrim_pick STEAM_0:1:12345
+scrim_pick_confirm
+```
+
+`scrim_status` reports the current captain, picks remaining in that turn, the
+pending pick, available players, and drafted players. Snake order is one pick for
+the first captain followed by alternating pairs; AB switches captain after every
+pick. Disconnected eligible players remain available and may still be drafted.
+Confirmed players retain their logical team across reconnects and are reconciled to
+that team's current CT/T side. A disconnected current captain pauses ordinary draft
+selection; the server-console/RCON commands are the explicit administrator override
+for recovery. The final pick advances automatically to `Ready`.
+
 ### Bot end-to-end testing
 
 Bots are excluded by default. Before enabling a scrim, opt them into tracking and the
