@@ -242,6 +242,26 @@ restart advances to `RegulationFirstHalf`. A captain disconnect during LO3, or a
 administrator issuing `scrim_unready <a|b>`, rewinds safely to `Ready`, clears both
 ready states, restores `pregame.cfg`, and allows the sequence to be run again.
 
+Regulation defaults to 12 rounds per half. It may be changed before LO3 begins:
+
+```text
+scrim_rounds 12
+```
+
+During the first half, accepted ReGameDLL gameplay round-end events are mapped from
+their physical CT/T winner to the authoritative logical Team A/B assignment. Total
+and current-period scores are updated and announced after every counted round.
+Restart, game-commence, draw, and otherwise ambiguous events do not alter the score.
+For an ambiguous result, an administrator can explicitly recover it with:
+
+```text
+scrim_round_winner a
+```
+
+After the configured number of counted rounds, ScrimMod enters `Halftime` exactly
+once. After the preceding round, it announces the final guaranteed round of the
+half. `scrim_status` reports total score, period score, and completed rounds.
+
 ### Bot end-to-end testing
 
 Bots are excluded by default. Before enabling a scrim, opt them into tracking and the

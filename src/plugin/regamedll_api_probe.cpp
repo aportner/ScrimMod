@@ -66,7 +66,13 @@ bool on_round_end(IReGameHook_RoundEnd* chain, const int win_status,
         } else if (event == ROUND_GAME_COMMENCE) {
             type = RoundEndType::Commence;
         }
-        g_round_end_listener(type);
+        RoundWinner winner = RoundWinner::None;
+        if (win_status == WINSTATUS_TERRORISTS) {
+            winner = RoundWinner::Terrorist;
+        } else if (win_status == WINSTATUS_CTS) {
+            winner = RoundWinner::CounterTerrorist;
+        }
+        g_round_end_listener(type, winner);
     }
     return accepted;
 }

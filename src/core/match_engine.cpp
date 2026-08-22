@@ -72,6 +72,11 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
         result.error = TransitionError::PrerequisiteNotMet;
         return result;
     }
+    if (state_.phase_ == Phase::RegulationFirstHalf && target == Phase::Halftime &&
+        state_.period_rounds_completed_ < state_.regulation_rounds_per_half_) {
+        result.error = TransitionError::PrerequisiteNotMet;
+        return result;
+    }
 
     const Phase previous_phase = state_.phase_;
     state_.phase_ = target;
@@ -97,6 +102,10 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
         state_.live_on_three_restarts_completed_ = 0;
         result.effects.push_back({EffectType::ExecuteLiveConfig, {}});
         result.effects.push_back({EffectType::RestartRound, {}, PlayerDestination::Spectator, 1});
+    } else if (target == Phase::RegulationFirstHalf) {
+        state_.team_a_.period_score = 0;
+        state_.team_b_.period_score = 0;
+        state_.period_rounds_completed_ = 0;
     }
     result.changed = true;
     return result;
@@ -379,7 +388,8 @@ std::vector<Effect> MatchEngine::reconciliation_effects() const {
     if (is_knife_phase()) {
         append_knife_reconciliation_effects(result);
     } else if (state_.phase_ == Phase::Draft || state_.phase_ == Phase::Ready ||
-               state_.phase_ == Phase::LiveOnThree || state_.phase_ == Phase::RegulationFirstHalf) {
+               state_.phase_ == Phase::LiveOnThree || state_.phase_ == Phase::RegulationFirstHalf ||
+               state_.phase_ == Phase::Halftime) {
         append_draft_reconciliation_effects(result.effects);
     }
     return result.effects;
@@ -822,6 +832,57 @@ TransitionResult MatchEngine::live_on_three_restart_completed() {
     return result;
 }
 
+MatchConfigurationResult MatchEngine::set_regulation_rounds_per_half(const int rounds) {
+    MatchConfigurationResult result{};
+    if (!state_.enabled_) {
+        result.error = MatchConfigurationError::ScrimDisabled;
+        return result;
+    }
+    if (state_.phase_ == Phase::LiveOnThree || state_.phase_ == Phase::RegulationFirstHalf ||
+        state_.phase_ == Phase::Halftime || state_.phase_ == Phase::RegulationSecondHalf ||
+        state_.phase_ == Phase::OvertimeFirstHalf || state_.phase_ == Phase::OvertimeHalftime ||
+        state_.phase_ == Phase::OvertimeSecondHalf || state_.phase_ == Phase::MatchComplete) {
+        result.error = MatchConfigurationError::WrongPhase;
+        return result;
+    }
+    if (rounds <= 0 || rounds > 100) {
+        result.error = MatchConfigurationError::InvalidValue;
+        return result;
+    }
+    if (state_.regulation_rounds_per_half_ != rounds) {
+        state_.regulation_rounds_per_half_ = rounds;
+        result.changed = true;
+    }
+    return result;
+}
+
+RoundResult MatchEngine::regulation_round_ended(const std::optional<Side> winning_side) {
+    if (state_.phase_ != Phase::RegulationFirstHalf) {
+        return {};
+    }
+    if (!winning_side.has_value()) {
+        RoundResult result{};
+        result.outcome = RoundOutcome::Ambiguous;
+        return result;
+    }
+    if (state_.team_a_.current_side == winning_side) {
+        return count_regulation_round(LogicalTeam::A);
+    }
+    if (state_.team_b_.current_side == winning_side) {
+        return count_regulation_round(LogicalTeam::B);
+    }
+    RoundResult result{};
+    result.outcome = RoundOutcome::Ambiguous;
+    return result;
+}
+
+RoundResult MatchEngine::force_regulation_round_winner(const LogicalTeam winning_team) {
+    if (state_.phase_ != Phase::RegulationFirstHalf) {
+        return {};
+    }
+    return count_regulation_round(winning_team);
+}
+
 TeamState& MatchEngine::mutable_team(const LogicalTeam team) noexcept {
     return team == LogicalTeam::A ? state_.team_a_ : state_.team_b_;
 }
@@ -923,6 +984,23 @@ void MatchEngine::advance_draft_turn() {
         std::min(turn_length, static_cast<int>(state_.available_draft_players_.size()));
 }
 
+RoundResult MatchEngine::count_regulation_round(const LogicalTeam winning_team) {
+    RoundResult result{};
+    TeamState& team = mutable_team(winning_team);
+    ++team.total_score;
+    ++team.period_score;
+    ++state_.period_rounds_completed_;
+    result.winning_team = winning_team;
+    if (state_.period_rounds_completed_ == state_.regulation_rounds_per_half_) {
+        const auto halftime = transition_to(Phase::Halftime);
+        result.outcome = halftime.ok() ? RoundOutcome::HalfComplete : RoundOutcome::Ambiguous;
+        result.effects = halftime.effects;
+    } else {
+        result.outcome = RoundOutcome::Counted;
+    }
+    return result;
+}
+
 bool MatchEngine::is_knife_phase() const noexcept {
     return state_.phase_ == Phase::KnifeSetup || state_.phase_ == Phase::KnifeLive;
 }
@@ -931,7 +1009,7 @@ bool MatchEngine::are_team_changes_locked() const noexcept {
     return is_knife_phase() || state_.phase_ == Phase::KnifeComplete ||
            state_.phase_ == Phase::SideOrPick || state_.phase_ == Phase::Draft ||
            state_.phase_ == Phase::Ready || state_.phase_ == Phase::LiveOnThree ||
-           state_.phase_ == Phase::RegulationFirstHalf;
+           state_.phase_ == Phase::RegulationFirstHalf || state_.phase_ == Phase::Halftime;
 }
 
 TransitionResult MatchEngine::require_knife_replay() {

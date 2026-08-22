@@ -112,6 +112,10 @@ int MatchState::live_on_three_restarts_completed() const noexcept {
     return live_on_three_restarts_completed_;
 }
 
+int MatchState::regulation_rounds_per_half() const noexcept { return regulation_rounds_per_half_; }
+
+int MatchState::period_rounds_completed() const noexcept { return period_rounds_completed_; }
+
 void MatchState::reset() noexcept {
     enabled_ = false;
     phase_ = Phase::Disabled;
@@ -134,6 +138,8 @@ void MatchState::reset() noexcept {
     drafted_players_.clear();
     pending_draft_player_id_.reset();
     live_on_three_restarts_completed_ = 0;
+    regulation_rounds_per_half_ = 12;
+    period_rounds_completed_ = 0;
 }
 
 } // namespace scrimmod::core

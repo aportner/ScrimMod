@@ -210,7 +210,42 @@ void on_player_killed(edict_t* victim, edict_t* killer) {
     }
 }
 
-void on_round_end(const scrimmod::plugin::RoundEndType type) {
+void on_round_end(const scrimmod::plugin::RoundEndType type,
+                  const scrimmod::plugin::RoundWinner winner) {
+    if (g_match_engine.state().phase() == scrimmod::core::Phase::RegulationFirstHalf) {
+        if (type != scrimmod::plugin::RoundEndType::Gameplay) {
+            return;
+        }
+        std::optional<scrimmod::core::Side> winning_side;
+        if (winner == scrimmod::plugin::RoundWinner::Terrorist) {
+            winning_side = scrimmod::core::Side::Terrorist;
+        } else if (winner == scrimmod::plugin::RoundWinner::CounterTerrorist) {
+            winning_side = scrimmod::core::Side::CounterTerrorist;
+        }
+        const auto result = g_match_engine.regulation_round_ended(winning_side);
+        apply_effects(result.effects);
+        if (result.outcome == scrimmod::core::RoundOutcome::Ambiguous) {
+            server_print("[ScrimMod] Ambiguous live round result; score unchanged. Use "
+                         "scrim_round_winner <a|b> for recovery.\n");
+        } else if (result.outcome == scrimmod::core::RoundOutcome::Counted ||
+                   result.outcome == scrimmod::core::RoundOutcome::HalfComplete) {
+            char score[128]{};
+            std::snprintf(score, sizeof(score), "[ScrimMod] Score: Team A %d - %d Team B%s\n",
+                          g_match_engine.state().team(scrimmod::core::LogicalTeam::A).total_score,
+                          g_match_engine.state().team(scrimmod::core::LogicalTeam::B).total_score,
+                          result.outcome == scrimmod::core::RoundOutcome::HalfComplete
+                              ? "; halftime reached"
+                              : "");
+            server_print(score);
+            if (result.outcome == scrimmod::core::RoundOutcome::Counted &&
+                g_match_engine.state().period_rounds_completed() + 1 ==
+                    g_match_engine.state().regulation_rounds_per_half()) {
+                server_print("[ScrimMod] *** LAST ROUND OF THE HALF - BUY OUT ***\n");
+            }
+        }
+        return;
+    }
+
     const auto result =
         g_match_engine.knife_round_ended(type != scrimmod::plugin::RoundEndType::Gameplay);
     apply_effects(result.effects);
@@ -301,6 +336,12 @@ void print_status() {
         state.enabled() ? "ENABLED" : "DISABLED", scrimmod::core::phase_name(state.phase()),
         state.team(scrimmod::core::LogicalTeam::A).total_score,
         state.team(scrimmod::core::LogicalTeam::B).total_score);
+    server_print(status);
+    std::snprintf(status, sizeof(status),
+                  "Period Score: Team A %d - %d Team B\nRounds Completed: %d / %d\n",
+                  state.team(scrimmod::core::LogicalTeam::A).period_score,
+                  state.team(scrimmod::core::LogicalTeam::B).period_score,
+                  state.period_rounds_completed(), state.regulation_rounds_per_half());
     server_print(status);
 
     std::vector<const scrimmod::core::Player*> players;
@@ -934,6 +975,56 @@ void ready_team() { set_team_ready(true); }
 
 void unready_team() { set_team_ready(false); }
 
+void set_regulation_rounds() {
+    if (g_engfuncs.pfnCmd_Argc() != 2) {
+        server_print("Usage: scrim_rounds <1-100>\n");
+        return;
+    }
+    const char* value = g_engfuncs.pfnCmd_Argv(1);
+    char* end = nullptr;
+    const long rounds = value != nullptr ? std::strtol(value, &end, 10) : 0;
+    if (value == nullptr || end == value || *end != '\0' || rounds < 1 || rounds > 100) {
+        server_print("Usage: scrim_rounds <1-100>\n");
+        return;
+    }
+    const auto result = g_match_engine.set_regulation_rounds_per_half(static_cast<int>(rounds));
+    if (!result.ok()) {
+        server_print("[ScrimMod] Regulation length cannot change after LO3 begins.\n");
+        return;
+    }
+    server_print("[ScrimMod] Regulation half length updated.\n");
+}
+
+void force_round_winner() {
+    if (g_engfuncs.pfnCmd_Argc() != 2) {
+        server_print("Usage: scrim_round_winner <a|b>\n");
+        return;
+    }
+    const char* value = g_engfuncs.pfnCmd_Argv(1);
+    scrimmod::core::LogicalTeam team;
+    if (value != nullptr && std::strcmp(value, "a") == 0) {
+        team = scrimmod::core::LogicalTeam::A;
+    } else if (value != nullptr && std::strcmp(value, "b") == 0) {
+        team = scrimmod::core::LogicalTeam::B;
+    } else {
+        server_print("Usage: scrim_round_winner <a|b>\n");
+        return;
+    }
+    const auto result = g_match_engine.force_regulation_round_winner(team);
+    if (result.outcome == scrimmod::core::RoundOutcome::Ignored) {
+        server_print("[ScrimMod] Round recovery is only available during live regulation.\n");
+        return;
+    }
+    apply_effects(result.effects);
+    char score[128]{};
+    std::snprintf(
+        score, sizeof(score), "[ScrimMod] Admin score recovery: Team A %d - %d Team B%s\n",
+        g_match_engine.state().team(scrimmod::core::LogicalTeam::A).total_score,
+        g_match_engine.state().team(scrimmod::core::LogicalTeam::B).total_score,
+        result.outcome == scrimmod::core::RoundOutcome::HalfComplete ? "; halftime reached" : "");
+    server_print(score);
+}
+
 } // namespace
 
 C_DLLEXPORT void WINAPI GiveFnptrsToDll(enginefuncs_t* engine_functions, globalvars_t* globals) {
@@ -1024,6 +1115,8 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS* function_table,
     g_engfuncs.pfnAddServerCommand("scrim_pick_confirm", confirm_draft_player);
     g_engfuncs.pfnAddServerCommand("scrim_ready", ready_team);
     g_engfuncs.pfnAddServerCommand("scrim_unready", unready_team);
+    g_engfuncs.pfnAddServerCommand("scrim_rounds", set_regulation_rounds);
+    g_engfuncs.pfnAddServerCommand("scrim_round_winner", force_round_winner);
     const cvar_t* registered_cvar = g_engfuncs.pfnCVarGetPointer(g_scrim_enabled.name);
     apply_enabled_value(registered_cvar != nullptr ? registered_cvar->string
                                                    : g_scrim_enabled.string);

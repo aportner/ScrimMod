@@ -151,6 +151,28 @@ struct ReadyResult {
     [[nodiscard]] bool ok() const noexcept { return error == ReadyError::None; }
 };
 
+enum class MatchConfigurationError : std::uint8_t {
+    None,
+    ScrimDisabled,
+    WrongPhase,
+    InvalidValue,
+};
+
+struct MatchConfigurationResult {
+    MatchConfigurationError error{MatchConfigurationError::None};
+    bool changed{false};
+
+    [[nodiscard]] bool ok() const noexcept { return error == MatchConfigurationError::None; }
+};
+
+enum class RoundOutcome : std::uint8_t { Ignored, Counted, HalfComplete, Ambiguous };
+
+struct RoundResult {
+    RoundOutcome outcome{RoundOutcome::Ignored};
+    std::optional<LogicalTeam> winning_team;
+    std::vector<Effect> effects;
+};
+
 class MatchEngine final {
   public:
     [[nodiscard]] const MatchState& state() const noexcept;
@@ -184,6 +206,9 @@ class MatchEngine final {
     [[nodiscard]] ReadyResult set_captain_ready(std::string captain_player_id, bool ready,
                                                 bool admin_override = false);
     [[nodiscard]] TransitionResult live_on_three_restart_completed();
+    [[nodiscard]] MatchConfigurationResult set_regulation_rounds_per_half(int rounds);
+    [[nodiscard]] RoundResult regulation_round_ended(std::optional<Side> winning_side);
+    [[nodiscard]] RoundResult force_regulation_round_winner(LogicalTeam winning_team);
 
   private:
     [[nodiscard]] static bool is_legal_transition(Phase from, Phase to) noexcept;
@@ -194,6 +219,7 @@ class MatchEngine final {
     void append_draft_reconciliation_effects(std::vector<Effect>& effects) const;
     void initialize_draft();
     void advance_draft_turn();
+    [[nodiscard]] RoundResult count_regulation_round(LogicalTeam winning_team);
     [[nodiscard]] bool is_knife_phase() const noexcept;
     [[nodiscard]] bool are_team_changes_locked() const noexcept;
     [[nodiscard]] TransitionResult require_knife_replay();

@@ -24,11 +24,13 @@ int main() {
     using scrimmod::core::EligibilityError;
     using scrimmod::core::KnifeKillOutcome;
     using scrimmod::core::KnifeRewardChoice;
+    using scrimmod::core::MatchConfigurationError;
     using scrimmod::core::MatchEngine;
     using scrimmod::core::Phase;
     using scrimmod::core::PlayerType;
     using scrimmod::core::PlayerUpdateError;
     using scrimmod::core::ReadyError;
+    using scrimmod::core::RoundOutcome;
     using scrimmod::core::TransitionError;
 
     MatchEngine engine;
@@ -453,6 +455,15 @@ int main() {
             "AB draft produces the expected balanced logical rosters");
     require(!engine.can_player_choose_team("STEAM_0:0:60"),
             "Ready keeps authoritative team placement locked");
+    require(engine.set_regulation_rounds_per_half(0).error == MatchConfigurationError::InvalidValue,
+            "regulation half length must be positive");
+    require(engine.set_regulation_rounds_per_half(101).error ==
+                MatchConfigurationError::InvalidValue,
+            "regulation half length has a guarded upper bound");
+    require(engine.set_regulation_rounds_per_half(3).ok(),
+            "regulation half length can be configured before LO3");
+    require(engine.state().regulation_rounds_per_half() == 3,
+            "configured regulation half length is explicit state");
 
     require(engine.live_on_three_restart_completed().error == TransitionError::IllegalTransition,
             "restart completion cannot advance state outside LO3");
@@ -531,6 +542,42 @@ int main() {
             "third completed restart makes regulation first half live");
     require(!engine.can_player_choose_team("STEAM_0:0:60"),
             "live regulation retains authoritative team lock");
+    require(engine.set_regulation_rounds_per_half(12).error == MatchConfigurationError::WrongPhase,
+            "regulation length is frozen after LO3 begins");
+    require(engine.transition_to(Phase::Halftime).error == TransitionError::PrerequisiteNotMet,
+            "first half cannot end before its configured round count");
+    const auto ambiguous_live_round = engine.regulation_round_ended(std::nullopt);
+    require(ambiguous_live_round.outcome == RoundOutcome::Ambiguous,
+            "ambiguous live round result is not guessed");
+    require(engine.state().period_rounds_completed() == 0,
+            "ambiguous live round does not advance completed-round state");
+    const auto ct_round = engine.regulation_round_ended(scrimmod::core::Side::CounterTerrorist);
+    require(ct_round.outcome == RoundOutcome::Counted &&
+                ct_round.winning_team == scrimmod::core::LogicalTeam::A,
+            "physical CT win maps to logical Team A on its current side");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).total_score == 1 &&
+                engine.state().team(scrimmod::core::LogicalTeam::A).period_score == 1,
+            "counted round updates both total and current-period Team A score");
+    const auto t_round = engine.regulation_round_ended(scrimmod::core::Side::Terrorist);
+    require(t_round.outcome == RoundOutcome::Counted &&
+                t_round.winning_team == scrimmod::core::LogicalTeam::B,
+            "physical T win maps to logical Team B on its current side");
+    require(engine.state().period_rounds_completed() == 2,
+            "valid gameplay results explicitly advance completed rounds");
+    const auto recovered_round =
+        engine.force_regulation_round_winner(scrimmod::core::LogicalTeam::A);
+    require(recovered_round.outcome == RoundOutcome::HalfComplete,
+            "explicit admin recovery can count an unambiguous logical winner");
+    require(engine.state().phase() == Phase::Halftime,
+            "configured final first-half round enters Halftime centrally");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).total_score == 2 &&
+                engine.state().team(scrimmod::core::LogicalTeam::B).total_score == 1,
+            "logical total score remains authoritative at halftime");
+    require(engine.regulation_round_ended(scrimmod::core::Side::Terrorist).outcome ==
+                RoundOutcome::Ignored,
+            "additional round result cannot double-count after halftime transition");
+    require(!engine.can_player_choose_team("STEAM_0:0:60"),
+            "halftime retains authoritative team lock");
 
     const auto disabled = engine.set_enabled(false);
     require(disabled.ok() && disabled.changed, "disabling active engine changes state");
@@ -548,6 +595,9 @@ int main() {
     require(engine.state().available_draft_players().empty(),
             "disable clears available draft state");
     require(engine.state().drafted_players().empty(), "disable clears drafted-player history");
+    require(engine.state().regulation_rounds_per_half() == 12,
+            "disable restores default regulation half length");
+    require(engine.state().period_rounds_completed() == 0, "disable clears completed-round state");
     require(engine.can_player_choose_team("STEAM_0:1:10"),
             "disable removes team-choice restrictions");
     require(engine.can_player_acquire_weapon("STEAM_0:1:10", false),

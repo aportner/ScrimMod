@@ -80,6 +80,8 @@ class MatchState final {
     [[nodiscard]] const std::vector<std::string>& drafted_players() const noexcept;
     [[nodiscard]] const std::optional<std::string>& pending_draft_player_id() const noexcept;
     [[nodiscard]] int live_on_three_restarts_completed() const noexcept;
+    [[nodiscard]] int regulation_rounds_per_half() const noexcept;
+    [[nodiscard]] int period_rounds_completed() const noexcept;
 
   private:
     friend class MatchEngine;
@@ -107,6 +109,8 @@ class MatchState final {
     std::vector<std::string> drafted_players_{};
     std::optional<std::string> pending_draft_player_id_{};
     int live_on_three_restarts_completed_{0};
+    int regulation_rounds_per_half_{12};
+    int period_rounds_completed_{0};
 };
 
 } // namespace scrimmod::core

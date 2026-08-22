@@ -35,7 +35,8 @@ using TeamChoiceListener = bool (*)(edict_s* entity);
 using WeaponAcquireListener = bool (*)(edict_s* entity, bool is_knife);
 using PlayerKilledListener = void (*)(edict_s* victim, edict_s* killer);
 enum class RoundEndType { Gameplay, Restart, Commence };
-using RoundEndListener = void (*)(RoundEndType type);
+enum class RoundWinner { None, Terrorist, CounterTerrorist };
+using RoundEndListener = void (*)(RoundEndType type, RoundWinner winner);
 using RoundRestartListener = void (*)();
 enum class ServerPlayerTeam { Terrorist, CounterTerrorist, Spectator };
 
