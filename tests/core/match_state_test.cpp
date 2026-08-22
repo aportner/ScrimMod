@@ -18,10 +18,15 @@ int main() {
     using scrimmod::core::LogicalTeam;
     using scrimmod::core::MatchState;
     using scrimmod::core::Phase;
+    using scrimmod::core::phase_name;
 
     MatchState state;
     require(!state.enabled(), "new match state is disabled");
     require(state.phase() == Phase::Disabled, "new match state has Disabled phase");
+    require(std::string{phase_name(Phase::Disabled)} == "Disabled",
+            "Disabled phase has a stable display name");
+    require(std::string{phase_name(Phase::OvertimeSecondHalf)} == "OvertimeSecondHalf",
+            "overtime phase has a stable display name");
 
     state.enable();
     require(state.enabled(), "enable marks state enabled");

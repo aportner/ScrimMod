@@ -14,5 +14,7 @@ struct ApiProbeResult {
 [[nodiscard]] ApiProbeResult probe_regamedll_api(void* module) noexcept;
 void reset_rehlds_api() noexcept;
 void reset_regamedll_api() noexcept;
+[[nodiscard]] bool add_rehlds_cvar_listener(const char* name, CvarListener listener) noexcept;
+void remove_rehlds_cvar_listener(const char* name, CvarListener listener) noexcept;
 
 } // namespace scrimmod::plugin

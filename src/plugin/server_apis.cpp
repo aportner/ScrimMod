@@ -97,4 +97,12 @@ const char* api_error_message(const ApiError error) noexcept {
     return "unknown API initialization error";
 }
 
+bool add_cvar_listener(const char* name, CvarListener listener) noexcept {
+    return add_rehlds_cvar_listener(name, listener);
+}
+
+void remove_cvar_listener(const char* name, CvarListener listener) noexcept {
+    remove_rehlds_cvar_listener(name, listener);
+}
+
 } // namespace scrimmod::plugin

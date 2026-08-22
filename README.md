@@ -104,8 +104,24 @@ the console should contain messages similar to:
 
 ```text
 [ScrimMod] ReHLDS API 3.15 and ReGameDLL API 5.30 detected.
-[ScrimMod] Compatibility probe loaded.
+[ScrimMod] Plugin loaded.
 ```
 
 Finally, use MetaMod's normal unload and reload commands for the ScrimMod plugin and
 verify that the server remains stable and the unload/load messages each appear once.
+
+## Initial server controls
+
+ScrimMod starts disabled. Use the server console or RCON to enable or disable it:
+
+```text
+scrim_enabled 1
+scrim_enabled 0
+```
+
+Disabling resets the in-memory match state and queues `exec pregame.cfg`. Inspect the
+authoritative core state with:
+
+```text
+scrim_status
+```

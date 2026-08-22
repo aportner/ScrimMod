@@ -47,4 +47,20 @@ ApiProbeResult probe_rehlds_api(void* module) noexcept {
 
 void reset_rehlds_api() noexcept { g_rehlds_api = nullptr; }
 
+bool add_rehlds_cvar_listener(const char* name, CvarListener listener) noexcept {
+    if (g_rehlds_api == nullptr || g_rehlds_api->GetFuncs() == nullptr || name == nullptr ||
+        listener == nullptr) {
+        return false;
+    }
+    g_rehlds_api->GetFuncs()->AddCvarListener(name, listener);
+    return true;
+}
+
+void remove_rehlds_cvar_listener(const char* name, CvarListener listener) noexcept {
+    if (g_rehlds_api != nullptr && g_rehlds_api->GetFuncs() != nullptr && name != nullptr &&
+        listener != nullptr) {
+        g_rehlds_api->GetFuncs()->RemoveCvarListener(name, listener);
+    }
+}
+
 } // namespace scrimmod::plugin

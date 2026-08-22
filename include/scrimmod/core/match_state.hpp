@@ -29,6 +29,8 @@ enum class Phase : std::uint8_t {
 enum class LogicalTeam : std::uint8_t { A, B };
 enum class Side : std::uint8_t { Terrorist, CounterTerrorist };
 
+[[nodiscard]] const char* phase_name(Phase phase) noexcept;
+
 struct Player {
     std::string steam_id;
     std::string last_known_name;

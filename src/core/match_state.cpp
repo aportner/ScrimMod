@@ -2,6 +2,42 @@
 
 namespace scrimmod::core {
 
+const char* phase_name(const Phase phase) noexcept {
+    switch (phase) {
+    case Phase::Disabled:
+        return "Disabled";
+    case Phase::CaptainSelection:
+        return "CaptainSelection";
+    case Phase::KnifeSetup:
+        return "KnifeSetup";
+    case Phase::KnifeLive:
+        return "KnifeLive";
+    case Phase::KnifeComplete:
+        return "KnifeComplete";
+    case Phase::SideOrPick:
+        return "SideOrPick";
+    case Phase::Draft:
+        return "Draft";
+    case Phase::Ready:
+        return "Ready";
+    case Phase::RegulationFirstHalf:
+        return "RegulationFirstHalf";
+    case Phase::Halftime:
+        return "Halftime";
+    case Phase::RegulationSecondHalf:
+        return "RegulationSecondHalf";
+    case Phase::OvertimeFirstHalf:
+        return "OvertimeFirstHalf";
+    case Phase::OvertimeHalftime:
+        return "OvertimeHalftime";
+    case Phase::OvertimeSecondHalf:
+        return "OvertimeSecondHalf";
+    case Phase::MatchComplete:
+        return "MatchComplete";
+    }
+    return "Unknown";
+}
+
 bool MatchState::enabled() const noexcept { return enabled_; }
 
 Phase MatchState::phase() const noexcept { return phase_; }

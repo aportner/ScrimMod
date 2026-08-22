@@ -27,8 +27,12 @@ struct ApiStatus {
     [[nodiscard]] bool ok() const noexcept { return error == ApiError::None; }
 };
 
+using CvarListener = void (*)(const char* new_value);
+
 [[nodiscard]] ApiStatus initialize_server_apis(const char* game_dll_path) noexcept;
 void shutdown_server_apis() noexcept;
 [[nodiscard]] const char* api_error_message(ApiError error) noexcept;
+[[nodiscard]] bool add_cvar_listener(const char* name, CvarListener listener) noexcept;
+void remove_cvar_listener(const char* name, CvarListener listener) noexcept;
 
 } // namespace scrimmod::plugin
