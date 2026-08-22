@@ -262,6 +262,23 @@ After the configured number of counted rounds, ScrimMod enters `Halftime` exactl
 once. After the preceding round, it announces the final guaranteed round of the
 half. `scrim_status` reports total score, period score, and completed rounds.
 
+At halftime, ScrimMod derives each logical team's second-half side as the opposite
+of its explicitly stored regulation starting side. It moves every connected roster
+member through ReGameDLL, preserves logical teams and total scores, and starts a
+fresh LO3 targeting `RegulationSecondHalf`. The new period score and completed-round
+count begin at zero only after that LO3 completes.
+
+If a captain disconnects during halftime LO3, ScrimMod pauses at `Halftime`, keeps
+the switched side mapping idempotently reconciled, and restores `pregame.cfg`. After
+the captain reconnects, restart the sequence with:
+
+```text
+scrim_halftime_start
+```
+
+The console/RCON command is also the explicit administrator override if the
+halftime sequence must proceed despite a disconnected captain.
+
 ### Bot end-to-end testing
 
 Bots are excluded by default. Before enabling a scrim, opt them into tracking and the

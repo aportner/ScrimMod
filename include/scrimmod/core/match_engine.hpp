@@ -206,6 +206,7 @@ class MatchEngine final {
     [[nodiscard]] ReadyResult set_captain_ready(std::string captain_player_id, bool ready,
                                                 bool admin_override = false);
     [[nodiscard]] TransitionResult live_on_three_restart_completed();
+    [[nodiscard]] TransitionResult start_halftime_live_on_three(bool admin_override = false);
     [[nodiscard]] MatchConfigurationResult set_regulation_rounds_per_half(int rounds);
     [[nodiscard]] RoundResult regulation_round_ended(std::optional<Side> winning_side);
     [[nodiscard]] RoundResult force_regulation_round_winner(LogicalTeam winning_team);
@@ -220,6 +221,7 @@ class MatchEngine final {
     void initialize_draft();
     void advance_draft_turn();
     [[nodiscard]] RoundResult count_regulation_round(LogicalTeam winning_team);
+    [[nodiscard]] TransitionResult begin_live_on_three(Phase target);
     [[nodiscard]] bool is_knife_phase() const noexcept;
     [[nodiscard]] bool are_team_changes_locked() const noexcept;
     [[nodiscard]] TransitionResult require_knife_replay();

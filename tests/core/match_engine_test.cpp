@@ -540,6 +540,9 @@ int main() {
     const auto third_lo3_restart = engine.live_on_three_restart_completed();
     require(third_lo3_restart.ok() && engine.state().phase() == Phase::RegulationFirstHalf,
             "third completed restart makes regulation first half live");
+    require(!engine.state().team(scrimmod::core::LogicalTeam::A).captain_ready &&
+                !engine.state().team(scrimmod::core::LogicalTeam::B).captain_ready,
+            "entering live regulation clears checkpoint-only ready state");
     require(!engine.can_player_choose_team("STEAM_0:0:60"),
             "live regulation retains authoritative team lock");
     require(engine.set_regulation_rounds_per_half(12).error == MatchConfigurationError::WrongPhase,
@@ -568,16 +571,75 @@ int main() {
         engine.force_regulation_round_winner(scrimmod::core::LogicalTeam::A);
     require(recovered_round.outcome == RoundOutcome::HalfComplete,
             "explicit admin recovery can count an unambiguous logical winner");
-    require(engine.state().phase() == Phase::Halftime,
-            "configured final first-half round enters Halftime centrally");
+    require(engine.state().phase() == Phase::LiveOnThree,
+            "configured final first-half round switches sides and starts halftime LO3");
+    require(engine.state().live_on_three_target_phase() == Phase::RegulationSecondHalf,
+            "halftime LO3 explicitly targets the regulation second half");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).current_side ==
+                    scrimmod::core::Side::Terrorist &&
+                engine.state().team(scrimmod::core::LogicalTeam::B).current_side ==
+                    scrimmod::core::Side::CounterTerrorist,
+            "halftime derives and stores sides opposite the regulation starting sides");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).starting_side ==
+                scrimmod::core::Side::CounterTerrorist,
+            "halftime does not overwrite the explicit regulation starting side");
     require(engine.state().team(scrimmod::core::LogicalTeam::A).total_score == 2 &&
                 engine.state().team(scrimmod::core::LogicalTeam::B).total_score == 1,
             "logical total score remains authoritative at halftime");
+    const auto halftime_assignment =
+        [&recovered_round](const std::string& player_id,
+                           const scrimmod::core::PlayerDestination destination) {
+            return std::any_of(recovered_round.effects.begin(), recovered_round.effects.end(),
+                               [&](const auto& effect) {
+                                   return effect.type == EffectType::AssignPlayerTeam &&
+                                          effect.player_id == player_id &&
+                                          effect.destination == destination;
+                               });
+        };
+    require(halftime_assignment("STEAM_0:1:10", scrimmod::core::PlayerDestination::Terrorist) &&
+                halftime_assignment("STEAM_0:0:20",
+                                    scrimmod::core::PlayerDestination::CounterTerrorist),
+            "halftime effects move connected captains to their second-half sides");
+    require(std::count_if(recovered_round.effects.begin(), recovered_round.effects.end(),
+                          [](const auto& effect) {
+                              return effect.type == EffectType::ExecuteLiveConfig;
+                          }) == 1,
+            "halftime automatically queues a fresh live config");
     require(engine.regulation_round_ended(scrimmod::core::Side::Terrorist).outcome ==
                 RoundOutcome::Ignored,
-            "additional round result cannot double-count after halftime transition");
+            "round result cannot count during halftime LO3");
     require(!engine.can_player_choose_team("STEAM_0:0:60"),
             "halftime retains authoritative team lock");
+
+    require(engine.player_disconnected("STEAM_0:1:10").ok(),
+            "captain can disconnect during halftime LO3");
+    require(engine.state().phase() == Phase::Halftime,
+            "halftime LO3 captain disconnect pauses at Halftime");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).current_side ==
+                scrimmod::core::Side::Terrorist,
+            "idempotent Halftime re-entry does not swap sides a second time");
+    require(engine.start_halftime_live_on_three().error == TransitionError::PrerequisiteNotMet,
+            "ordinary halftime restart waits for both captains to reconnect");
+    require(engine.transition_to(Phase::LiveOnThree).error == TransitionError::PrerequisiteNotMet,
+            "generic transition cannot bypass the explicit halftime LO3 target");
+    require(engine.player_connected("STEAM_0:1:10", "Second Name").ok(),
+            "halftime captain can reconnect");
+    const auto restarted_halftime = engine.start_halftime_live_on_three();
+    require(restarted_halftime.ok() && engine.state().phase() == Phase::LiveOnThree,
+            "halftime LO3 can restart after captain reconnects");
+    require(engine.live_on_three_restart_completed().ok() &&
+                engine.live_on_three_restart_completed().ok(),
+            "halftime LO3 completes its first two restarts");
+    const auto halftime_third_restart = engine.live_on_three_restart_completed();
+    require(halftime_third_restart.ok() && engine.state().phase() == Phase::RegulationSecondHalf,
+            "third halftime restart enters regulation second half");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).total_score == 2 &&
+                engine.state().team(scrimmod::core::LogicalTeam::B).total_score == 1,
+            "second-half entry preserves total logical scores");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).period_score == 0 &&
+                engine.state().team(scrimmod::core::LogicalTeam::B).period_score == 0 &&
+                engine.state().period_rounds_completed() == 0,
+            "second-half entry resets only the current-period score and round count");
 
     const auto disabled = engine.set_enabled(false);
     require(disabled.ok() && disabled.changed, "disabling active engine changes state");

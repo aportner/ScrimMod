@@ -262,6 +262,8 @@ void on_round_restart() {
     apply_effects(result.effects);
     if (g_match_engine.state().phase() == scrimmod::core::Phase::RegulationFirstHalf) {
         server_print("[ScrimMod] Live on three complete; regulation first half is live.\n");
+    } else if (g_match_engine.state().phase() == scrimmod::core::Phase::RegulationSecondHalf) {
+        server_print("[ScrimMod] Live on three complete; regulation second half is live.\n");
     }
 }
 
@@ -307,9 +309,12 @@ void on_client_disconnect(edict_t* entity) {
                 g_match_engine.state().phase() == scrimmod::core::Phase::KnifeSetup) {
                 server_print(
                     "[ScrimMod] Captain disconnected; knife round paused at KnifeSetup.\n");
-            } else if (previous_phase == scrimmod::core::Phase::LiveOnThree &&
-                       g_match_engine.state().phase() == scrimmod::core::Phase::Ready) {
-                server_print("[ScrimMod] Captain disconnected during LO3; rewound to Ready.\n");
+            } else if (previous_phase == scrimmod::core::Phase::LiveOnThree) {
+                server_print(
+                    g_match_engine.state().phase() == scrimmod::core::Phase::Halftime
+                        ? "[ScrimMod] Captain disconnected during halftime LO3; paused at "
+                          "Halftime.\n"
+                        : "[ScrimMod] Captain disconnected during LO3; rewound to Ready.\n");
             }
         }
     }
@@ -478,8 +483,12 @@ void print_status() {
         }
     }
     if (state.phase() == scrimmod::core::Phase::LiveOnThree) {
-        std::snprintf(status, sizeof(status), "LO3 Restarts Completed: %d / 3\n",
-                      state.live_on_three_restarts_completed());
+        const char* target =
+            state.live_on_three_target_phase() == scrimmod::core::Phase::RegulationSecondHalf
+                ? "RegulationSecondHalf"
+                : "RegulationFirstHalf";
+        std::snprintf(status, sizeof(status), "LO3 Restarts Completed: %d / 3\nLO3 Target: %s\n",
+                      state.live_on_three_restarts_completed(), target);
         server_print(status);
     }
 }
@@ -967,13 +976,29 @@ void set_team_ready(const bool ready) {
     } else if (ready) {
         server_print("[ScrimMod] Captain marked ready.\n");
     } else {
-        server_print("[ScrimMod] Captain marked unready; Ready checkpoint restored.\n");
+        server_print(g_match_engine.state().phase() == scrimmod::core::Phase::Halftime
+                         ? "[ScrimMod] Halftime LO3 paused; run scrim_halftime_start to retry.\n"
+                         : "[ScrimMod] Captain marked unready; Ready checkpoint restored.\n");
     }
 }
 
 void ready_team() { set_team_ready(true); }
 
 void unready_team() { set_team_ready(false); }
+
+void start_halftime() {
+    if (g_engfuncs.pfnCmd_Argc() != 1) {
+        server_print("Usage: scrim_halftime_start\n");
+        return;
+    }
+    const auto result = g_match_engine.start_halftime_live_on_three(true);
+    if (!result.ok()) {
+        server_print("[ScrimMod] Halftime LO3 can only start while paused at Halftime.\n");
+        return;
+    }
+    apply_effects(result.effects);
+    server_print("[ScrimMod] Halftime LO3 restarted.\n");
+}
 
 void set_regulation_rounds() {
     if (g_engfuncs.pfnCmd_Argc() != 2) {
@@ -1115,6 +1140,7 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS* function_table,
     g_engfuncs.pfnAddServerCommand("scrim_pick_confirm", confirm_draft_player);
     g_engfuncs.pfnAddServerCommand("scrim_ready", ready_team);
     g_engfuncs.pfnAddServerCommand("scrim_unready", unready_team);
+    g_engfuncs.pfnAddServerCommand("scrim_halftime_start", start_halftime);
     g_engfuncs.pfnAddServerCommand("scrim_rounds", set_regulation_rounds);
     g_engfuncs.pfnAddServerCommand("scrim_round_winner", force_round_winner);
     const cvar_t* registered_cvar = g_engfuncs.pfnCVarGetPointer(g_scrim_enabled.name);

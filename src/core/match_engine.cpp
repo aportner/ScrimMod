@@ -67,8 +67,14 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
         result.error = TransitionError::PrerequisiteNotMet;
         return result;
     }
-    if (state_.phase_ == Phase::LiveOnThree && target == Phase::RegulationFirstHalf &&
-        state_.live_on_three_restarts_completed_ < 3) {
+    if (target == Phase::LiveOnThree && !state_.live_on_three_target_phase_.has_value()) {
+        result.error = TransitionError::PrerequisiteNotMet;
+        return result;
+    }
+    if (state_.phase_ == Phase::LiveOnThree &&
+        (target == Phase::RegulationFirstHalf || target == Phase::RegulationSecondHalf) &&
+        (state_.live_on_three_restarts_completed_ < 3 ||
+         state_.live_on_three_target_phase_ != target)) {
         result.error = TransitionError::PrerequisiteNotMet;
         return result;
     }
@@ -94,6 +100,7 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
         state_.team_a_.captain_ready = false;
         state_.team_b_.captain_ready = false;
         state_.live_on_three_restarts_completed_ = 0;
+        state_.live_on_three_target_phase_.reset();
         if (previous_phase == Phase::LiveOnThree) {
             result.effects.push_back({EffectType::ExecutePregameConfig, {}});
             append_draft_reconciliation_effects(result.effects);
@@ -102,10 +109,26 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
         state_.live_on_three_restarts_completed_ = 0;
         result.effects.push_back({EffectType::ExecuteLiveConfig, {}});
         result.effects.push_back({EffectType::RestartRound, {}, PlayerDestination::Spectator, 1});
-    } else if (target == Phase::RegulationFirstHalf) {
+    } else if (target == Phase::Halftime) {
+        state_.team_a_.current_side = *state_.team_a_.starting_side == Side::Terrorist
+                                          ? Side::CounterTerrorist
+                                          : Side::Terrorist;
+        state_.team_b_.current_side = *state_.team_b_.starting_side == Side::Terrorist
+                                          ? Side::CounterTerrorist
+                                          : Side::Terrorist;
+        if (previous_phase == Phase::LiveOnThree) {
+            result.effects.push_back({EffectType::ExecutePregameConfig, {}});
+        }
+        append_draft_reconciliation_effects(result.effects);
+        state_.live_on_three_restarts_completed_ = 0;
+        state_.live_on_three_target_phase_.reset();
+    } else if (target == Phase::RegulationFirstHalf || target == Phase::RegulationSecondHalf) {
         state_.team_a_.period_score = 0;
         state_.team_b_.period_score = 0;
+        state_.team_a_.captain_ready = false;
+        state_.team_b_.captain_ready = false;
         state_.period_rounds_completed_ = 0;
+        state_.live_on_three_target_phase_.reset();
     }
     result.changed = true;
     return result;
@@ -186,8 +209,11 @@ PlayerUpdateResult MatchEngine::player_disconnected(std::string player_id) {
     } else if (state_.phase_ == Phase::LiveOnThree &&
                (state_.team_a_.captain_player_id == player_id ||
                 state_.team_b_.captain_player_id == player_id)) {
-        const auto ready = transition_to(Phase::Ready);
-        result.effects = ready.effects;
+        const Phase recovery_phase =
+            state_.live_on_three_target_phase_ == Phase::RegulationSecondHalf ? Phase::Halftime
+                                                                              : Phase::Ready;
+        const auto recovered = transition_to(recovery_phase);
+        result.effects = recovered.effects;
     }
     return result;
 }
@@ -389,7 +415,7 @@ std::vector<Effect> MatchEngine::reconciliation_effects() const {
         append_knife_reconciliation_effects(result);
     } else if (state_.phase_ == Phase::Draft || state_.phase_ == Phase::Ready ||
                state_.phase_ == Phase::LiveOnThree || state_.phase_ == Phase::RegulationFirstHalf ||
-               state_.phase_ == Phase::Halftime) {
+               state_.phase_ == Phase::Halftime || state_.phase_ == Phase::RegulationSecondHalf) {
         append_draft_reconciliation_effects(result.effects);
     }
     return result.effects;
@@ -782,7 +808,10 @@ ReadyResult MatchEngine::set_captain_ready(std::string captain_player_id, const 
     }
 
     if (live_on_three_recovery) {
-        const auto rewound = transition_to(Phase::Ready);
+        const Phase recovery_phase =
+            state_.live_on_three_target_phase_ == Phase::RegulationSecondHalf ? Phase::Halftime
+                                                                              : Phase::Ready;
+        const auto rewound = transition_to(recovery_phase);
         if (!rewound.ok()) {
             result.error = ReadyError::WrongPhase;
             return result;
@@ -797,7 +826,7 @@ ReadyResult MatchEngine::set_captain_ready(std::string captain_player_id, const 
         result.changed = true;
     }
     if (state_.team_a_.captain_ready && state_.team_b_.captain_ready) {
-        auto live_on_three = transition_to(Phase::LiveOnThree);
+        auto live_on_three = begin_live_on_three(Phase::RegulationFirstHalf);
         if (!live_on_three.ok()) {
             result.error = ReadyError::WrongPhase;
             return result;
@@ -826,10 +855,31 @@ TransitionResult MatchEngine::live_on_three_restart_completed() {
     } else if (state_.live_on_three_restarts_completed_ == 2) {
         result.effects.push_back({EffectType::RestartRound, {}, PlayerDestination::Spectator, 3});
     } else {
-        const auto live = transition_to(Phase::RegulationFirstHalf);
+        const Phase target = *state_.live_on_three_target_phase_;
+        const auto live = transition_to(target);
         result.effects.insert(result.effects.end(), live.effects.begin(), live.effects.end());
     }
     return result;
+}
+
+TransitionResult MatchEngine::start_halftime_live_on_three(const bool admin_override) {
+    TransitionResult result{};
+    if (!state_.enabled_) {
+        result.error = TransitionError::ScrimDisabled;
+        return result;
+    }
+    if (state_.phase_ != Phase::Halftime) {
+        result.error = TransitionError::IllegalTransition;
+        return result;
+    }
+    const auto captain_a = state_.players_.find(*state_.team_a_.captain_player_id);
+    const auto captain_b = state_.players_.find(*state_.team_b_.captain_player_id);
+    if (!admin_override && (captain_a == state_.players_.end() || !captain_a->second.connected ||
+                            captain_b == state_.players_.end() || !captain_b->second.connected)) {
+        result.error = TransitionError::PrerequisiteNotMet;
+        return result;
+    }
+    return begin_live_on_three(Phase::RegulationSecondHalf);
 }
 
 MatchConfigurationResult MatchEngine::set_regulation_rounds_per_half(const int rounds) {
@@ -984,6 +1034,20 @@ void MatchEngine::advance_draft_turn() {
         std::min(turn_length, static_cast<int>(state_.available_draft_players_.size()));
 }
 
+TransitionResult MatchEngine::begin_live_on_three(const Phase target) {
+    TransitionResult result{};
+    if (target != Phase::RegulationFirstHalf && target != Phase::RegulationSecondHalf) {
+        result.error = TransitionError::IllegalTransition;
+        return result;
+    }
+    state_.live_on_three_target_phase_ = target;
+    result = transition_to(Phase::LiveOnThree);
+    if (!result.ok()) {
+        state_.live_on_three_target_phase_.reset();
+    }
+    return result;
+}
+
 RoundResult MatchEngine::count_regulation_round(const LogicalTeam winning_team) {
     RoundResult result{};
     TeamState& team = mutable_team(winning_team);
@@ -995,6 +1059,13 @@ RoundResult MatchEngine::count_regulation_round(const LogicalTeam winning_team) 
         const auto halftime = transition_to(Phase::Halftime);
         result.outcome = halftime.ok() ? RoundOutcome::HalfComplete : RoundOutcome::Ambiguous;
         result.effects = halftime.effects;
+        if (halftime.ok()) {
+            const auto live_on_three = start_halftime_live_on_three(false);
+            if (live_on_three.ok()) {
+                result.effects.insert(result.effects.end(), live_on_three.effects.begin(),
+                                      live_on_three.effects.end());
+            }
+        }
     } else {
         result.outcome = RoundOutcome::Counted;
     }
@@ -1009,7 +1080,8 @@ bool MatchEngine::are_team_changes_locked() const noexcept {
     return is_knife_phase() || state_.phase_ == Phase::KnifeComplete ||
            state_.phase_ == Phase::SideOrPick || state_.phase_ == Phase::Draft ||
            state_.phase_ == Phase::Ready || state_.phase_ == Phase::LiveOnThree ||
-           state_.phase_ == Phase::RegulationFirstHalf || state_.phase_ == Phase::Halftime;
+           state_.phase_ == Phase::RegulationFirstHalf || state_.phase_ == Phase::Halftime ||
+           state_.phase_ == Phase::RegulationSecondHalf;
 }
 
 TransitionResult MatchEngine::require_knife_replay() {
@@ -1037,11 +1109,12 @@ bool MatchEngine::is_legal_transition(const Phase from, const Phase to) noexcept
     case Phase::Ready:
         return to == Phase::LiveOnThree;
     case Phase::LiveOnThree:
-        return to == Phase::Ready || to == Phase::RegulationFirstHalf;
+        return to == Phase::Ready || to == Phase::Halftime || to == Phase::RegulationFirstHalf ||
+               to == Phase::RegulationSecondHalf;
     case Phase::RegulationFirstHalf:
         return to == Phase::Halftime;
     case Phase::Halftime:
-        return to == Phase::RegulationSecondHalf;
+        return to == Phase::LiveOnThree;
     case Phase::RegulationSecondHalf:
         return to == Phase::OvertimeFirstHalf || to == Phase::MatchComplete;
     case Phase::OvertimeFirstHalf:
