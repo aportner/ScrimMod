@@ -1,7 +1,10 @@
+#include <cstdio>
 #include <cstring>
 
 #include <extdll.h>
 #include <meta_api.h>
+
+#include "server_apis.hpp"
 
 enginefuncs_t g_engfuncs{};
 globalvars_t* gpGlobals = nullptr;
@@ -30,6 +33,12 @@ void server_print(const char* message) {
     if (g_engfuncs.pfnServerPrint != nullptr) {
         g_engfuncs.pfnServerPrint(message);
     }
+}
+
+void print_api_error(const scrimmod::plugin::ApiStatus& status) {
+    server_print("[ScrimMod] Cannot load: ");
+    server_print(scrimmod::plugin::api_error_message(status.error));
+    server_print("\n");
 }
 
 } // namespace
@@ -73,10 +82,27 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS* function_table,
 
     gpMetaGlobals = meta_globals;
     gpGamedllFuncs = gamedll_functions;
+
+    const char* game_dll_path = GET_GAME_INFO(PLID, GINFO_DLL_FULLPATH);
+    const scrimmod::plugin::ApiStatus api_status =
+        scrimmod::plugin::initialize_server_apis(game_dll_path);
+    if (!api_status.ok()) {
+        print_api_error(api_status);
+        gpMetaGlobals = nullptr;
+        gpGamedllFuncs = nullptr;
+        return FALSE;
+    }
+
     g_meta_functions.pfnGetEntityAPI2 = GetEntityAPI2;
     std::memcpy(function_table, &g_meta_functions, sizeof(g_meta_functions));
 
-    server_print("[ScrimMod] Empty plugin scaffold loaded.\n");
+    char api_message[192]{};
+    std::snprintf(api_message, sizeof(api_message),
+                  "[ScrimMod] ReHLDS API %d.%d and ReGameDLL API %d.%d detected.\n",
+                  api_status.rehlds_major, api_status.rehlds_minor, api_status.regamedll_major,
+                  api_status.regamedll_minor);
+    server_print(api_message);
+    server_print("[ScrimMod] Compatibility probe loaded.\n");
     return TRUE;
 }
 
@@ -85,7 +111,8 @@ C_DLLEXPORT int Meta_Detach(PLUG_LOADTIME now, PL_UNLOAD_REASON reason) {
         return FALSE;
     }
 
-    server_print("[ScrimMod] Empty plugin scaffold unloaded.\n");
+    scrimmod::plugin::shutdown_server_apis();
+    server_print("[ScrimMod] Compatibility probe unloaded.\n");
     gpMetaGlobals = nullptr;
     gpGamedllFuncs = nullptr;
     return TRUE;

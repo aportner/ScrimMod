@@ -71,7 +71,12 @@ if(SCRIMMOD_BUILD_PLUGIN)
         "${metamod_r_SOURCE_DIR}/metamod/extra/example/include/metamod"
     )
 
-    add_library(scrimmod_plugin SHARED src/plugin/metamod_plugin.cpp)
+    add_library(scrimmod_plugin SHARED
+        src/plugin/metamod_plugin.cpp
+        src/plugin/regamedll_api_probe.cpp
+        src/plugin/rehlds_api_probe.cpp
+        src/plugin/server_apis.cpp
+    )
     target_link_libraries(scrimmod_plugin PRIVATE ScrimMod::Core dl)
     target_compile_features(scrimmod_plugin PRIVATE cxx_std_17)
     target_compile_definitions(scrimmod_plugin
@@ -80,6 +85,10 @@ if(SCRIMMOD_BUILD_PLUGIN)
             _LINUX
             LINUX
             NDEBUG
+            _snprintf=snprintf
+            _stricmp=strcasecmp
+            _strnicmp=strncasecmp
+            _vsnprintf=vsnprintf
     )
     target_compile_options(scrimmod_plugin
         PRIVATE

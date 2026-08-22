@@ -11,6 +11,10 @@ scrimmages. The behavioral specification is in [`PLAN.md`](PLAN.md).
 - Metamod-R
 - GCC-built 32-bit Linux shared object: `scrimmod_mm_i386.so`
 
+The current adapter requires ReHLDS API 3.3 or newer and ReGameDLL API 5.3 or newer.
+It validates both interfaces when MetaMod attaches the plugin and refuses to load if
+either dependency is absent or incompatible.
+
 Original HLDS/GameDLL, Windows server binaries, and macOS server binaries are not
 initial targets. MetaMod-R SDK headers are pinned in `cmake/dependencies.cmake`.
 
@@ -96,10 +100,11 @@ linux addons/ScrimMod/scrimmod_mm_i386.so
 ```
 
 Start the server and run `meta list`. ScrimMod should appear with status `RUN`, and
-the console should contain:
+the console should contain messages similar to:
 
 ```text
-[ScrimMod] Empty plugin scaffold loaded.
+[ScrimMod] ReHLDS API 3.15 and ReGameDLL API 5.30 detected.
+[ScrimMod] Compatibility probe loaded.
 ```
 
 Finally, use MetaMod's normal unload and reload commands for the ScrimMod plugin and

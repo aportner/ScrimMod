@@ -810,9 +810,10 @@ core during macOS development, but it is not the production plugin toolchain.
 
 Support for the original HLDS/GameDLL, Windows server binaries, and macOS server
 binaries is outside the initial scope. Dependency revisions must be pinned to
-known-good versions. The initial empty adapter uses the official MetaMod-R example
-headers pinned in `cmake/dependencies.cmake`; direct ReHLDS and ReGameDLL API revisions
-must be pinned before those extended APIs are used.
+known-good versions. The adapter compiles against the official ReHLDS and ReGameDLL
+API headers bundled with the MetaMod-R example pinned in `cmake/dependencies.cmake`.
+This currently establishes minimum compatible API versions of ReHLDS 3.3 and
+ReGameDLL 5.3. Runtime API versions are validated before the plugin attaches.
 
 Development may occur on macOS. The platform-independent core and its unit tests
 must build and run there, while the actual plugin is compiled and integration-tested
