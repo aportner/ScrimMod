@@ -114,4 +114,9 @@ if(SCRIMMOD_BUILD_PLUGIN)
             PREFIX ""
             POSITION_INDEPENDENT_CODE ON
     )
+    install(
+        TARGETS scrimmod_plugin
+        LIBRARY DESTINATION .
+        COMPONENT plugin
+    )
 endif()

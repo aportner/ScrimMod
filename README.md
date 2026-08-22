@@ -57,16 +57,29 @@ ctest --preset linux-release
 
 ## Server smoke test
 
-Copy the artifact to:
+Install the built plugin. By default this targets
+`~/hlds/cstrike/addons/ScrimMod`:
+
+```sh
+./install-linux.sh
+```
+
+To use a different Counter-Strike directory, pass it explicitly:
+
+```sh
+./install-linux.sh /path/to/hlds/cstrike
+```
+
+Alternatively, set `SCRIMMOD_CSTRIKE_DIR`. The installed artifact is:
 
 ```text
-cstrike/addons/scrimmod/scrimmod_mm_i386.so
+cstrike/addons/ScrimMod/scrimmod_mm_i386.so
 ```
 
 Add this line to `cstrike/addons/metamod/plugins.ini`:
 
 ```text
-linux addons/scrimmod/scrimmod_mm_i386.so
+linux addons/ScrimMod/scrimmod_mm_i386.so
 ```
 
 Start the server and run `meta list`. ScrimMod should appear with status `RUN`, and
