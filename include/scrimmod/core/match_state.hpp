@@ -8,6 +8,8 @@
 
 namespace scrimmod::core {
 
+class MatchEngine;
+
 enum class Phase : std::uint8_t {
     Disabled,
     CaptainSelection,
@@ -53,11 +55,12 @@ class MatchState final {
     [[nodiscard]] Phase phase() const noexcept;
     [[nodiscard]] const TeamState& team(LogicalTeam team) const noexcept;
     [[nodiscard]] const std::unordered_map<std::string, Player>& players() const noexcept;
-
-    void enable();
-    void disable();
+    [[nodiscard]] bool eligible_pool_captured() const noexcept;
+    [[nodiscard]] const std::vector<std::string>& eligible_players() const noexcept;
 
   private:
+    friend class MatchEngine;
+
     void reset() noexcept;
 
     bool enabled_{false};
@@ -65,6 +68,8 @@ class MatchState final {
     TeamState team_a_{};
     TeamState team_b_{};
     std::unordered_map<std::string, Player> players_{};
+    bool eligible_pool_captured_{false};
+    std::vector<std::string> eligible_players_{};
 };
 
 } // namespace scrimmod::core

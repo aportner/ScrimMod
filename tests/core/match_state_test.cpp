@@ -28,16 +28,9 @@ int main() {
     require(std::string{phase_name(Phase::OvertimeSecondHalf)} == "OvertimeSecondHalf",
             "overtime phase has a stable display name");
 
-    state.enable();
-    require(state.enabled(), "enable marks state enabled");
-    require(state.phase() == Phase::CaptainSelection, "enable begins at captain selection");
-
-    state.disable();
-    require(!state.enabled(), "disable marks state disabled");
-    require(state.phase() == Phase::Disabled, "disable restores Disabled phase");
-    require(state.players().empty(), "disable clears players");
-    require(state.team(LogicalTeam::A).roster.empty(), "disable clears Team A roster");
-    require(state.team(LogicalTeam::B).roster.empty(), "disable clears Team B roster");
+    require(state.players().empty(), "new match state has no players");
+    require(state.team(LogicalTeam::A).roster.empty(), "new match state has empty Team A");
+    require(state.team(LogicalTeam::B).roster.empty(), "new match state has empty Team B");
 
     std::cout << "All ScrimMod core tests passed\n";
     return EXIT_SUCCESS;

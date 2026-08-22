@@ -50,13 +50,11 @@ const std::unordered_map<std::string, Player>& MatchState::players() const noexc
     return players_;
 }
 
-void MatchState::enable() {
-    reset();
-    enabled_ = true;
-    phase_ = Phase::CaptainSelection;
-}
+bool MatchState::eligible_pool_captured() const noexcept { return eligible_pool_captured_; }
 
-void MatchState::disable() { reset(); }
+const std::vector<std::string>& MatchState::eligible_players() const noexcept {
+    return eligible_players_;
+}
 
 void MatchState::reset() noexcept {
     enabled_ = false;
@@ -64,6 +62,8 @@ void MatchState::reset() noexcept {
     team_a_ = TeamState{};
     team_b_ = TeamState{};
     players_.clear();
+    eligible_pool_captured_ = false;
+    eligible_players_.clear();
 }
 
 } // namespace scrimmod::core

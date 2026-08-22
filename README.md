@@ -125,3 +125,20 @@ authoritative core state with:
 ```text
 scrim_status
 ```
+
+When enabled, `scrim_status` also lists tracked human Steam players by normalized
+Steam ID and connected/disconnected state. Enabling captures players already on the
+server; later reconnects update the same persistent player record rather than using
+the temporary client slot as identity. That initial connected-player set is sealed as
+the eligible pool. Players joining afterward are tracked but are not automatically
+made draft-eligible. During captain selection, an administrator can explicitly
+change that fixed pool from the server console or RCON using a normalized Steam ID
+or a unique exact player name (quote names containing spaces):
+
+```text
+scrim_add STEAM_0:1:12345
+scrim_remove "Player Name"
+```
+
+These commands only select from players ScrimMod has already tracked. If duplicate
+players have the same name, use the Steam ID.

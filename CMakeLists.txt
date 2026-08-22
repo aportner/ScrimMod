@@ -15,6 +15,7 @@ option(SCRIMMOD_BUILD_PLUGIN "Build the Linux Metamod-R plugin adapter" OFF)
 include(cmake/dependencies.cmake)
 
 add_library(scrimmod_core
+    src/core/match_engine.cpp
     src/core/match_state.cpp
 )
 add_library(ScrimMod::Core ALIAS scrimmod_core)
@@ -37,6 +38,11 @@ if(SCRIMMOD_BUILD_TESTS)
     target_link_libraries(scrimmod_core_tests PRIVATE ScrimMod::Core)
     target_compile_features(scrimmod_core_tests PRIVATE cxx_std_17)
     add_test(NAME scrimmod.core COMMAND scrimmod_core_tests)
+
+    add_executable(scrimmod_engine_tests tests/core/match_engine_test.cpp)
+    target_link_libraries(scrimmod_engine_tests PRIVATE ScrimMod::Core)
+    target_compile_features(scrimmod_engine_tests PRIVATE cxx_std_17)
+    add_test(NAME scrimmod.engine COMMAND scrimmod_engine_tests)
 endif()
 
 if(SCRIMMOD_BUILD_PLUGIN)

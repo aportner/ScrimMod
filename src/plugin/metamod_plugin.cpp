@@ -1,11 +1,14 @@
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
+#include <vector>
 
 #include <extdll.h>
 #include <meta_api.h>
 
-#include "scrimmod/core/match_state.hpp"
+#include "scrimmod/core/match_engine.hpp"
 #include "server_apis.hpp"
 
 enginefuncs_t g_engfuncs{};
@@ -30,7 +33,7 @@ namespace {
 
 DLL_FUNCTIONS g_dll_functions{};
 META_FUNCTIONS g_meta_functions{};
-scrimmod::core::MatchState g_match_state{};
+scrimmod::core::MatchEngine g_match_engine{};
 char g_scrim_enabled_default[] = "0";
 cvar_t g_scrim_enabled = {
     "scrim_enabled", g_scrim_enabled_default, FCVAR_SERVER, 0.0F, nullptr,
@@ -54,31 +57,183 @@ void queue_pregame_config() {
     }
 }
 
-void apply_enabled_value(const char* new_value) {
-    const bool enable = new_value != nullptr && std::strtof(new_value, nullptr) != 0.0F;
-    if (enable) {
-        if (!g_match_state.enabled()) {
-            g_match_state.enable();
-            server_print("[ScrimMod] Enabled.\n");
+void apply_effects(const std::vector<scrimmod::core::Effect>& effects) {
+    for (const auto& effect : effects) {
+        switch (effect.type) {
+        case scrimmod::core::EffectType::ExecutePregameConfig:
+            queue_pregame_config();
+            break;
         }
+    }
+}
+
+bool is_trackable_steam_id(const char* steam_id) {
+    if (steam_id == nullptr || std::strncmp(steam_id, "STEAM_", 6) != 0) {
+        return false;
+    }
+    return std::strcmp(steam_id, "STEAM_ID_PENDING") != 0 &&
+           std::strcmp(steam_id, "STEAM_ID_LAN") != 0;
+}
+
+void track_connected_player(edict_t* entity) {
+    if (!g_match_engine.state().enabled() || entity == nullptr || entity->free != FALSE) {
         return;
     }
 
-    g_match_state.disable();
-    queue_pregame_config();
-    server_print("[ScrimMod] Disabled; match state reset and pregame.cfg queued.\n");
+    const char* steam_id = g_engfuncs.pfnGetPlayerAuthId(entity);
+    if (!is_trackable_steam_id(steam_id)) {
+        return;
+    }
+
+    const char* name = g_engfuncs.pfnSzFromIndex(entity->v.netname);
+    static_cast<void>(g_match_engine.player_connected(steam_id, name != nullptr ? name : ""));
+}
+
+void capture_connected_players() {
+    if (gpGlobals == nullptr) {
+        return;
+    }
+    for (int index = 1; index <= gpGlobals->maxClients; ++index) {
+        track_connected_player(g_engfuncs.pfnPEntityOfEntIndex(index));
+    }
+    static_cast<void>(g_match_engine.capture_eligible_players());
+}
+
+void on_client_put_in_server(edict_t* entity) {
+    track_connected_player(entity);
+    RETURN_META(MRES_IGNORED);
+}
+
+void on_client_disconnect(edict_t* entity) {
+    if (g_match_engine.state().enabled() && entity != nullptr) {
+        const char* steam_id = g_engfuncs.pfnGetPlayerAuthId(entity);
+        if (is_trackable_steam_id(steam_id)) {
+            static_cast<void>(g_match_engine.player_disconnected(steam_id));
+        }
+    }
+    RETURN_META(MRES_IGNORED);
+}
+
+void apply_enabled_value(const char* new_value) {
+    const bool enable = new_value != nullptr && std::strtof(new_value, nullptr) != 0.0F;
+    const auto result = g_match_engine.set_enabled(enable);
+    apply_effects(result.effects);
+    if (enable && result.changed) {
+        capture_connected_players();
+        server_print("[ScrimMod] Enabled.\n");
+    } else if (!enable) {
+        server_print("[ScrimMod] Disabled; match state reset and pregame.cfg queued.\n");
+    }
 }
 
 void print_status() {
+    const auto& state = g_match_engine.state();
     char status[256]{};
-    std::snprintf(status, sizeof(status),
-                  "Scrim Mod: %s\nPhase: %s\nTeam A Score: %d\nTeam B Score: %d\n",
-                  g_match_state.enabled() ? "ENABLED" : "DISABLED",
-                  scrimmod::core::phase_name(g_match_state.phase()),
-                  g_match_state.team(scrimmod::core::LogicalTeam::A).total_score,
-                  g_match_state.team(scrimmod::core::LogicalTeam::B).total_score);
+    std::snprintf(
+        status, sizeof(status), "Scrim Mod: %s\nPhase: %s\nTeam A Score: %d\nTeam B Score: %d\n",
+        state.enabled() ? "ENABLED" : "DISABLED", scrimmod::core::phase_name(state.phase()),
+        state.team(scrimmod::core::LogicalTeam::A).total_score,
+        state.team(scrimmod::core::LogicalTeam::B).total_score);
     server_print(status);
+
+    std::vector<const scrimmod::core::Player*> players;
+    players.reserve(state.players().size());
+    for (const auto& [steam_id, player] : state.players()) {
+        static_cast<void>(steam_id);
+        players.push_back(&player);
+    }
+    std::sort(players.begin(), players.end(),
+              [](const auto* left, const auto* right) { return left->steam_id < right->steam_id; });
+
+    std::snprintf(status, sizeof(status), "Tracked Players: %zu\n", players.size());
+    server_print(status);
+    for (const auto* player : players) {
+        const bool eligible = std::binary_search(state.eligible_players().begin(),
+                                                 state.eligible_players().end(), player->steam_id);
+        std::snprintf(status, sizeof(status), "  %s [%s] - %s%s\n", player->last_known_name.c_str(),
+                      player->steam_id.c_str(), player->connected ? "connected" : "disconnected",
+                      eligible ? ", eligible" : "");
+        server_print(status);
+    }
 }
+
+const char* eligibility_error_message(const scrimmod::core::EligibilityError error) {
+    using scrimmod::core::EligibilityError;
+    switch (error) {
+    case EligibilityError::None:
+        return "none";
+    case EligibilityError::ScrimDisabled:
+        return "ScrimMod is disabled";
+    case EligibilityError::WrongPhase:
+        return "the eligible pool can only be changed during captain selection";
+    case EligibilityError::PoolNotCaptured:
+        return "the eligible pool has not been captured";
+    case EligibilityError::InvalidSteamId:
+        return "the player argument is empty";
+    case EligibilityError::UnknownPlayer:
+        return "no tracked player matches that Steam ID or exact name";
+    }
+    return "unknown eligibility error";
+}
+
+std::string resolve_unique_player_name(const char* target, bool& ambiguous) {
+    ambiguous = false;
+    std::string resolved;
+    if (target == nullptr) {
+        return resolved;
+    }
+
+    for (const auto& [steam_id, player] : g_match_engine.state().players()) {
+        if (player.last_known_name != target) {
+            continue;
+        }
+        if (!resolved.empty()) {
+            ambiguous = true;
+            return {};
+        }
+        resolved = steam_id;
+    }
+    return resolved;
+}
+
+void update_eligible_player(const bool add) {
+    if (g_engfuncs.pfnCmd_Argc() != 2) {
+        server_print(add ? "Usage: scrim_add <Steam ID or exact name>\n"
+                         : "Usage: scrim_remove <Steam ID or exact name>\n");
+        return;
+    }
+
+    const char* target = g_engfuncs.pfnCmd_Argv(1);
+    auto result = add ? g_match_engine.add_eligible_player(target != nullptr ? target : "")
+                      : g_match_engine.remove_eligible_player(target != nullptr ? target : "");
+    if (result.error == scrimmod::core::EligibilityError::UnknownPlayer) {
+        bool ambiguous = false;
+        const std::string steam_id = resolve_unique_player_name(target, ambiguous);
+        if (ambiguous) {
+            server_print("[ScrimMod] Player name is ambiguous; use the Steam ID.\n");
+            return;
+        }
+        if (!steam_id.empty()) {
+            result = add ? g_match_engine.add_eligible_player(steam_id)
+                         : g_match_engine.remove_eligible_player(steam_id);
+        }
+    }
+
+    if (!result.ok()) {
+        server_print("[ScrimMod] Cannot update eligible pool: ");
+        server_print(eligibility_error_message(result.error));
+        server_print(".\n");
+        return;
+    }
+
+    server_print(result.changed ? (add ? "[ScrimMod] Player added to eligible pool.\n"
+                                       : "[ScrimMod] Player removed from eligible pool.\n")
+                                : "[ScrimMod] Eligible pool already has the requested state.\n");
+}
+
+void add_eligible_player() { update_eligible_player(true); }
+
+void remove_eligible_player() { update_eligible_player(false); }
 
 } // namespace
 
@@ -142,10 +297,14 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS* function_table,
     }
 
     g_engfuncs.pfnAddServerCommand("scrim_status", print_status);
+    g_engfuncs.pfnAddServerCommand("scrim_add", add_eligible_player);
+    g_engfuncs.pfnAddServerCommand("scrim_remove", remove_eligible_player);
     const cvar_t* registered_cvar = g_engfuncs.pfnCVarGetPointer(g_scrim_enabled.name);
     apply_enabled_value(registered_cvar != nullptr ? registered_cvar->string
                                                    : g_scrim_enabled.string);
 
+    g_dll_functions.pfnClientDisconnect = on_client_disconnect;
+    g_dll_functions.pfnClientPutInServer = on_client_put_in_server;
     g_meta_functions.pfnGetEntityAPI2 = GetEntityAPI2;
     std::memcpy(function_table, &g_meta_functions, sizeof(g_meta_functions));
 
@@ -165,8 +324,7 @@ C_DLLEXPORT int Meta_Detach(PLUG_LOADTIME now, PL_UNLOAD_REASON reason) {
     }
 
     scrimmod::plugin::remove_cvar_listener(g_scrim_enabled.name, apply_enabled_value);
-    g_match_state.disable();
-    queue_pregame_config();
+    apply_effects(g_match_engine.set_enabled(false).effects);
     scrimmod::plugin::shutdown_server_apis();
     server_print("[ScrimMod] Plugin unloaded.\n");
     gpMetaGlobals = nullptr;
