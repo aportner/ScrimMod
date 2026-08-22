@@ -34,7 +34,9 @@ using PlayerSpawnListener = void (*)(edict_s* entity);
 using TeamChoiceListener = bool (*)(edict_s* entity);
 using WeaponAcquireListener = bool (*)(edict_s* entity, bool is_knife);
 using PlayerKilledListener = void (*)(edict_s* victim, edict_s* killer);
-using RoundEndListener = void (*)(bool generated_restart);
+enum class RoundEndType { Gameplay, Restart, Commence };
+using RoundEndListener = void (*)(RoundEndType type);
+using RoundRestartListener = void (*)();
 enum class ServerPlayerTeam { Terrorist, CounterTerrorist, Spectator };
 
 [[nodiscard]] ApiStatus initialize_server_apis(const char* game_dll_path) noexcept;
@@ -48,7 +50,8 @@ void remove_cvar_listener(const char* name, CvarListener listener) noexcept;
                                           TeamChoiceListener team_choice_listener,
                                           WeaponAcquireListener weapon_acquire_listener,
                                           PlayerKilledListener player_killed_listener,
-                                          RoundEndListener round_end_listener) noexcept;
+                                          RoundEndListener round_end_listener,
+                                          RoundRestartListener round_restart_listener) noexcept;
 void remove_gameplay_hooks() noexcept;
 
 } // namespace scrimmod::plugin

@@ -225,6 +225,23 @@ that team's current CT/T side. A disconnected current captain pauses ordinary dr
 selection; the server-console/RCON commands are the explicit administrator override
 for recovery. The final pick advances automatically to `Ready`.
 
+At the Ready checkpoint, use the server console or RCON to set each logical team's
+captain state:
+
+```text
+scrim_ready a
+scrim_ready b
+scrim_unready a
+```
+
+Readiness is tracked separately for Team A and Team B and shown by `scrim_status`.
+The second ready confirmation queues `cal.cfg` and enters the explicit
+`LiveOnThree` phase. ScrimMod then uses confirmed ReGameDLL restart events to run
+`sv_restart 1`, `sv_restart 1`, and `sv_restart 3`; only the completion of the third
+restart advances to `RegulationFirstHalf`. A captain disconnect during LO3, or an
+administrator issuing `scrim_unready <a|b>`, rewinds safely to `Ready`, clears both
+ready states, restores `pregame.cfg`, and allows the sequence to be run again.
+
 ### Bot end-to-end testing
 
 Bots are excluded by default. Before enabling a scrim, opt them into tracking and the

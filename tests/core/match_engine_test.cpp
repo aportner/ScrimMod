@@ -28,6 +28,7 @@ int main() {
     using scrimmod::core::Phase;
     using scrimmod::core::PlayerType;
     using scrimmod::core::PlayerUpdateError;
+    using scrimmod::core::ReadyError;
     using scrimmod::core::TransitionError;
 
     MatchEngine engine;
@@ -452,6 +453,84 @@ int main() {
             "AB draft produces the expected balanced logical rosters");
     require(!engine.can_player_choose_team("STEAM_0:0:60"),
             "Ready keeps authoritative team placement locked");
+
+    require(engine.live_on_three_restart_completed().error == TransitionError::IllegalTransition,
+            "restart completion cannot advance state outside LO3");
+    require(engine.transition_to(Phase::RegulationFirstHalf).error ==
+                TransitionError::IllegalTransition,
+            "Ready cannot bypass the explicit LO3 phase");
+    require(engine.transition_to(Phase::LiveOnThree).error == TransitionError::PrerequisiteNotMet,
+            "generic transition cannot bypass both captain ready confirmations");
+    require(engine.set_captain_ready("STEAM_0:0:60", true).error == ReadyError::NotCaptain,
+            "non-captain cannot ready a logical team");
+    const auto captain_a_ready = engine.set_captain_ready("STEAM_0:1:10", true);
+    require(captain_a_ready.ok() && captain_a_ready.changed,
+            "connected Team A captain can become ready");
+    require(engine.state().team(scrimmod::core::LogicalTeam::A).captain_ready &&
+                !engine.state().team(scrimmod::core::LogicalTeam::B).captain_ready,
+            "captain ready states are tracked separately");
+    require(!engine.set_captain_ready("STEAM_0:1:10", true).changed,
+            "repeating a ready state is idempotent");
+    require(engine.set_captain_ready("STEAM_0:1:10", false).changed,
+            "captain can become unready before LO3");
+    require(engine.set_captain_ready("STEAM_0:1:10", true).ok(), "Team A captain can ready again");
+    require(engine.player_disconnected("STEAM_0:0:20").ok(),
+            "Team B captain can disconnect at Ready");
+    require(engine.set_captain_ready("STEAM_0:0:20", true).error == ReadyError::CaptainDisconnected,
+            "ordinary ready confirmation rejects a disconnected captain");
+    require(engine.player_connected("STEAM_0:0:20", "Late Player").ok(),
+            "Team B captain can reconnect before readying");
+    const auto captain_b_ready = engine.set_captain_ready("STEAM_0:0:20", true);
+    require(captain_b_ready.ok() && captain_b_ready.changed, "second captain ready starts LO3");
+    require(engine.state().phase() == Phase::LiveOnThree,
+            "both ready confirmations enter explicit LO3 phase");
+    require(engine.transition_to(Phase::RegulationFirstHalf).error ==
+                TransitionError::PrerequisiteNotMet,
+            "LO3 cannot enter regulation before three completed restarts");
+    require(captain_b_ready.effects.size() == 2 &&
+                captain_b_ready.effects.front().type == EffectType::ExecuteLiveConfig &&
+                captain_b_ready.effects.back().type == EffectType::RestartRound &&
+                captain_b_ready.effects.back().value == 1,
+            "LO3 entry executes cal.cfg and requests the first one-second restart");
+    const auto admin_lo3_rewind = engine.set_captain_ready("STEAM_0:1:10", false, true);
+    require(admin_lo3_rewind.ok() && engine.state().phase() == Phase::Ready &&
+                !admin_lo3_rewind.effects.empty() &&
+                admin_lo3_rewind.effects.front().type == EffectType::ExecutePregameConfig,
+            "administrator unready explicitly rewinds LO3 and restores pregame config");
+    require(engine.set_captain_ready("STEAM_0:1:10", true).ok() &&
+                engine.set_captain_ready("STEAM_0:0:20", true).ok(),
+            "captains can restart LO3 after an administrator rewind");
+    const auto first_lo3_restart = engine.live_on_three_restart_completed();
+    require(first_lo3_restart.ok() && first_lo3_restart.effects.size() == 1 &&
+                first_lo3_restart.effects.front().value == 1,
+            "first completed restart requests the second one-second restart");
+    require(engine.state().live_on_three_restarts_completed() == 1,
+            "LO3 explicitly tracks completed restart count");
+    const auto second_lo3_restart = engine.live_on_three_restart_completed();
+    require(second_lo3_restart.ok() && second_lo3_restart.effects.size() == 1 &&
+                second_lo3_restart.effects.front().value == 3,
+            "second completed restart requests the three-second final restart");
+    require(engine.player_disconnected("STEAM_0:1:10").ok(), "captain can disconnect during LO3");
+    require(engine.state().phase() == Phase::Ready,
+            "captain disconnect rewinds incomplete LO3 to Ready");
+    require(!engine.state().team(scrimmod::core::LogicalTeam::A).captain_ready &&
+                !engine.state().team(scrimmod::core::LogicalTeam::B).captain_ready,
+            "LO3 rewind clears both captain ready states");
+    require(engine.state().live_on_three_restarts_completed() == 0,
+            "LO3 rewind clears restart progress");
+    require(engine.player_connected("STEAM_0:1:10", "Second Name").ok(),
+            "disconnected LO3 captain can reconnect");
+    require(engine.set_captain_ready("STEAM_0:1:10", true).ok() &&
+                engine.set_captain_ready("STEAM_0:0:20", true).ok(),
+            "both captains can restart LO3 after rewind");
+    require(engine.live_on_three_restart_completed().ok() &&
+                engine.live_on_three_restart_completed().ok(),
+            "restarted LO3 completes its first two restarts");
+    const auto third_lo3_restart = engine.live_on_three_restart_completed();
+    require(third_lo3_restart.ok() && engine.state().phase() == Phase::RegulationFirstHalf,
+            "third completed restart makes regulation first half live");
+    require(!engine.can_player_choose_team("STEAM_0:0:60"),
+            "live regulation retains authoritative team lock");
 
     const auto disabled = engine.set_enabled(false);
     require(disabled.ok() && disabled.changed, "disabling active engine changes state");

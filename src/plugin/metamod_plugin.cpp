@@ -67,6 +67,12 @@ void queue_pregame_config() {
     }
 }
 
+void queue_live_config() {
+    if (g_engfuncs.pfnServerCommand != nullptr) {
+        g_engfuncs.pfnServerCommand("exec cal.cfg\n");
+    }
+}
+
 bool is_steam_player_id(const char* player_id) {
     if (player_id == nullptr || std::strncmp(player_id, "STEAM_", 6) != 0) {
         return false;
@@ -134,6 +140,9 @@ void apply_effects(const std::vector<scrimmod::core::Effect>& effects) {
         case scrimmod::core::EffectType::ExecutePregameConfig:
             queue_pregame_config();
             break;
+        case scrimmod::core::EffectType::ExecuteLiveConfig:
+            queue_live_config();
+            break;
         case scrimmod::core::EffectType::AssignPlayerTeam: {
             edict_t* entity = find_connected_entity(effect.player_id);
             if (entity == nullptr) {
@@ -154,7 +163,10 @@ void apply_effects(const std::vector<scrimmod::core::Effect>& effects) {
         }
         case scrimmod::core::EffectType::RestartRound:
             if (g_engfuncs.pfnServerCommand != nullptr) {
-                g_engfuncs.pfnServerCommand("sv_restart 1\n");
+                char command[32]{};
+                std::snprintf(command, sizeof(command), "sv_restart %d\n",
+                              effect.value > 0 ? effect.value : 1);
+                g_engfuncs.pfnServerCommand(command);
             }
             break;
         }
@@ -198,11 +210,23 @@ void on_player_killed(edict_t* victim, edict_t* killer) {
     }
 }
 
-void on_round_end(const bool generated_restart) {
-    const auto result = g_match_engine.knife_round_ended(generated_restart);
+void on_round_end(const scrimmod::plugin::RoundEndType type) {
+    const auto result =
+        g_match_engine.knife_round_ended(type != scrimmod::plugin::RoundEndType::Gameplay);
     apply_effects(result.effects);
     if (result.changed) {
         server_print("[ScrimMod] Knife round ended without a winner; returned to KnifeSetup.\n");
+    }
+}
+
+void on_round_restart() {
+    if (g_match_engine.state().phase() != scrimmod::core::Phase::LiveOnThree) {
+        return;
+    }
+    const auto result = g_match_engine.live_on_three_restart_completed();
+    apply_effects(result.effects);
+    if (g_match_engine.state().phase() == scrimmod::core::Phase::RegulationFirstHalf) {
+        server_print("[ScrimMod] Live on three complete; regulation first half is live.\n");
     }
 }
 
@@ -248,6 +272,9 @@ void on_client_disconnect(edict_t* entity) {
                 g_match_engine.state().phase() == scrimmod::core::Phase::KnifeSetup) {
                 server_print(
                     "[ScrimMod] Captain disconnected; knife round paused at KnifeSetup.\n");
+            } else if (previous_phase == scrimmod::core::Phase::LiveOnThree &&
+                       g_match_engine.state().phase() == scrimmod::core::Phase::Ready) {
+                server_print("[ScrimMod] Captain disconnected during LO3; rewound to Ready.\n");
             }
         }
     }
@@ -314,8 +341,9 @@ void print_status() {
         const char* connection = player != state.players().end() && player->second.connected
                                      ? "connected"
                                      : "disconnected";
-        std::snprintf(status, sizeof(status), "Captain %c: %s [%s] - %s\n", team_name, name,
-                      captain->c_str(), connection);
+        std::snprintf(status, sizeof(status), "Captain %c: %s [%s] - %s, %s\n", team_name, name,
+                      captain->c_str(), connection,
+                      state.team(team).captain_ready ? "ready" : "not ready");
         server_print(status);
     }
 
@@ -407,6 +435,11 @@ void print_status() {
                           player.connected ? "" : " (disconnected)");
             server_print(status);
         }
+    }
+    if (state.phase() == scrimmod::core::Phase::LiveOnThree) {
+        std::snprintf(status, sizeof(status), "LO3 Restarts Completed: %d / 3\n",
+                      state.live_on_three_restarts_completed());
+        server_print(status);
     }
 }
 
@@ -838,6 +871,69 @@ void confirm_draft_player() {
                      : "[ScrimMod] Draft pick confirmed.\n");
 }
 
+const char* ready_error_message(const scrimmod::core::ReadyError error) {
+    using scrimmod::core::ReadyError;
+    switch (error) {
+    case ReadyError::None:
+        return "none";
+    case ReadyError::ScrimDisabled:
+        return "ScrimMod is disabled";
+    case ReadyError::WrongPhase:
+        return "captain readiness can only change during Ready";
+    case ReadyError::InvalidPlayerId:
+        return "the captain argument is empty";
+    case ReadyError::UnknownPlayer:
+        return "the selected captain is not tracked";
+    case ReadyError::NotCaptain:
+        return "the selected player is not a captain";
+    case ReadyError::CaptainDisconnected:
+        return "the captain is disconnected";
+    }
+    return "unknown ready error";
+}
+
+void set_team_ready(const bool ready) {
+    if (g_engfuncs.pfnCmd_Argc() != 2) {
+        server_print(ready ? "Usage: scrim_ready <a|b>\n" : "Usage: scrim_unready <a|b>\n");
+        return;
+    }
+    const char* team_argument = g_engfuncs.pfnCmd_Argv(1);
+    scrimmod::core::LogicalTeam team;
+    if (team_argument != nullptr && std::strcmp(team_argument, "a") == 0) {
+        team = scrimmod::core::LogicalTeam::A;
+    } else if (team_argument != nullptr && std::strcmp(team_argument, "b") == 0) {
+        team = scrimmod::core::LogicalTeam::B;
+    } else {
+        server_print(ready ? "Usage: scrim_ready <a|b>\n" : "Usage: scrim_unready <a|b>\n");
+        return;
+    }
+
+    const auto& captain = g_match_engine.state().team(team).captain_player_id;
+    if (!captain.has_value()) {
+        server_print("[ScrimMod] That logical team does not have a captain.\n");
+        return;
+    }
+    const auto result = g_match_engine.set_captain_ready(*captain, ready, true);
+    if (!result.ok()) {
+        server_print("[ScrimMod] Cannot change captain readiness: ");
+        server_print(ready_error_message(result.error));
+        server_print(".\n");
+        return;
+    }
+    apply_effects(result.effects);
+    if (g_match_engine.state().phase() == scrimmod::core::Phase::LiveOnThree) {
+        server_print("[ScrimMod] Both captains ready; cal.cfg queued and LO3 started.\n");
+    } else if (ready) {
+        server_print("[ScrimMod] Captain marked ready.\n");
+    } else {
+        server_print("[ScrimMod] Captain marked unready; Ready checkpoint restored.\n");
+    }
+}
+
+void ready_team() { set_team_ready(true); }
+
+void unready_team() { set_team_ready(false); }
+
 } // namespace
 
 C_DLLEXPORT void WINAPI GiveFnptrsToDll(enginefuncs_t* engine_functions, globalvars_t* globals) {
@@ -901,7 +997,7 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS* function_table,
     }
     if (!scrimmod::plugin::install_gameplay_hooks(on_player_spawn, allow_team_choice,
                                                   allow_weapon_acquisition, on_player_killed,
-                                                  on_round_end)) {
+                                                  on_round_end, on_round_restart)) {
         server_print("[ScrimMod] Cannot load: failed to register ReGameDLL gameplay hooks.\n");
         scrimmod::plugin::remove_cvar_listener(g_scrim_enabled.name, apply_enabled_value);
         scrimmod::plugin::shutdown_server_apis();
@@ -926,6 +1022,8 @@ C_DLLEXPORT int Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS* function_table,
     g_engfuncs.pfnAddServerCommand("scrim_draft_type", set_draft_type);
     g_engfuncs.pfnAddServerCommand("scrim_pick", choose_draft_player);
     g_engfuncs.pfnAddServerCommand("scrim_pick_confirm", confirm_draft_player);
+    g_engfuncs.pfnAddServerCommand("scrim_ready", ready_team);
+    g_engfuncs.pfnAddServerCommand("scrim_unready", unready_team);
     const cvar_t* registered_cvar = g_engfuncs.pfnCVarGetPointer(g_scrim_enabled.name);
     apply_enabled_value(registered_cvar != nullptr ? registered_cvar->string
                                                    : g_scrim_enabled.string);

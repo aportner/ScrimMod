@@ -20,6 +20,8 @@ const char* phase_name(const Phase phase) noexcept {
         return "Draft";
     case Phase::Ready:
         return "Ready";
+    case Phase::LiveOnThree:
+        return "LiveOnThree";
     case Phase::RegulationFirstHalf:
         return "RegulationFirstHalf";
     case Phase::Halftime:
@@ -106,6 +108,10 @@ const std::optional<std::string>& MatchState::pending_draft_player_id() const no
     return pending_draft_player_id_;
 }
 
+int MatchState::live_on_three_restarts_completed() const noexcept {
+    return live_on_three_restarts_completed_;
+}
+
 void MatchState::reset() noexcept {
     enabled_ = false;
     phase_ = Phase::Disabled;
@@ -127,6 +133,7 @@ void MatchState::reset() noexcept {
     available_draft_players_.clear();
     drafted_players_.clear();
     pending_draft_player_id_.reset();
+    live_on_three_restarts_completed_ = 0;
 }
 
 } // namespace scrimmod::core

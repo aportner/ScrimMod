@@ -10,6 +10,7 @@ namespace scrimmod::core {
 
 enum class EffectType : std::uint8_t {
     ExecutePregameConfig,
+    ExecuteLiveConfig,
     AssignPlayerTeam,
     EnsureKnifeLoadout,
     RestartRound,
@@ -21,6 +22,7 @@ struct Effect {
     EffectType type;
     std::string player_id;
     PlayerDestination destination{PlayerDestination::Spectator};
+    int value{0};
 };
 
 enum class TransitionError : std::uint8_t {
@@ -131,6 +133,24 @@ struct DraftResult {
     [[nodiscard]] bool ok() const noexcept { return error == DraftError::None; }
 };
 
+enum class ReadyError : std::uint8_t {
+    None,
+    ScrimDisabled,
+    WrongPhase,
+    InvalidPlayerId,
+    UnknownPlayer,
+    NotCaptain,
+    CaptainDisconnected,
+};
+
+struct ReadyResult {
+    ReadyError error{ReadyError::None};
+    bool changed{false};
+    std::vector<Effect> effects;
+
+    [[nodiscard]] bool ok() const noexcept { return error == ReadyError::None; }
+};
+
 class MatchEngine final {
   public:
     [[nodiscard]] const MatchState& state() const noexcept;
@@ -161,6 +181,9 @@ class MatchEngine final {
     [[nodiscard]] DraftResult choose_draft_player(std::string player_id,
                                                   bool admin_override = false);
     [[nodiscard]] DraftResult confirm_draft_player(bool admin_override = false);
+    [[nodiscard]] ReadyResult set_captain_ready(std::string captain_player_id, bool ready,
+                                                bool admin_override = false);
+    [[nodiscard]] TransitionResult live_on_three_restart_completed();
 
   private:
     [[nodiscard]] static bool is_legal_transition(Phase from, Phase to) noexcept;

@@ -62,7 +62,18 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
         result.error = TransitionError::PrerequisiteNotMet;
         return result;
     }
+    if (state_.phase_ == Phase::Ready && target == Phase::LiveOnThree &&
+        (!state_.team_a_.captain_ready || !state_.team_b_.captain_ready)) {
+        result.error = TransitionError::PrerequisiteNotMet;
+        return result;
+    }
+    if (state_.phase_ == Phase::LiveOnThree && target == Phase::RegulationFirstHalf &&
+        state_.live_on_three_restarts_completed_ < 3) {
+        result.error = TransitionError::PrerequisiteNotMet;
+        return result;
+    }
 
+    const Phase previous_phase = state_.phase_;
     state_.phase_ = target;
     if (target == Phase::KnifeSetup) {
         commit_captains();
@@ -75,6 +86,17 @@ TransitionResult MatchEngine::transition_to(const Phase target) {
     } else if (target == Phase::Ready) {
         state_.current_draft_captain_player_id_.reset();
         state_.draft_picks_remaining_in_turn_ = 0;
+        state_.team_a_.captain_ready = false;
+        state_.team_b_.captain_ready = false;
+        state_.live_on_three_restarts_completed_ = 0;
+        if (previous_phase == Phase::LiveOnThree) {
+            result.effects.push_back({EffectType::ExecutePregameConfig, {}});
+            append_draft_reconciliation_effects(result.effects);
+        }
+    } else if (target == Phase::LiveOnThree) {
+        state_.live_on_three_restarts_completed_ = 0;
+        result.effects.push_back({EffectType::ExecuteLiveConfig, {}});
+        result.effects.push_back({EffectType::RestartRound, {}, PlayerDestination::Spectator, 1});
     }
     result.changed = true;
     return result;
@@ -146,6 +168,17 @@ PlayerUpdateResult MatchEngine::player_disconnected(std::string player_id) {
                                               state_.team_b_.captain_player_id == player_id)) {
         const auto replay = require_knife_replay();
         result.effects = replay.effects;
+    } else if (state_.phase_ == Phase::Ready) {
+        if (state_.team_a_.captain_player_id == player_id) {
+            state_.team_a_.captain_ready = false;
+        } else if (state_.team_b_.captain_player_id == player_id) {
+            state_.team_b_.captain_ready = false;
+        }
+    } else if (state_.phase_ == Phase::LiveOnThree &&
+               (state_.team_a_.captain_player_id == player_id ||
+                state_.team_b_.captain_player_id == player_id)) {
+        const auto ready = transition_to(Phase::Ready);
+        result.effects = ready.effects;
     }
     return result;
 }
@@ -345,7 +378,8 @@ std::vector<Effect> MatchEngine::reconciliation_effects() const {
     TransitionResult result{};
     if (is_knife_phase()) {
         append_knife_reconciliation_effects(result);
-    } else if (state_.phase_ == Phase::Draft || state_.phase_ == Phase::Ready) {
+    } else if (state_.phase_ == Phase::Draft || state_.phase_ == Phase::Ready ||
+               state_.phase_ == Phase::LiveOnThree || state_.phase_ == Phase::RegulationFirstHalf) {
         append_draft_reconciliation_effects(result.effects);
     }
     return result.effects;
@@ -581,10 +615,10 @@ DraftResult MatchEngine::set_draft_type(const DraftType type) {
         return result;
     }
     if (state_.phase_ == Phase::Draft || state_.phase_ == Phase::Ready ||
-        state_.phase_ == Phase::RegulationFirstHalf || state_.phase_ == Phase::Halftime ||
-        state_.phase_ == Phase::RegulationSecondHalf || state_.phase_ == Phase::OvertimeFirstHalf ||
-        state_.phase_ == Phase::OvertimeHalftime || state_.phase_ == Phase::OvertimeSecondHalf ||
-        state_.phase_ == Phase::MatchComplete) {
+        state_.phase_ == Phase::LiveOnThree || state_.phase_ == Phase::RegulationFirstHalf ||
+        state_.phase_ == Phase::Halftime || state_.phase_ == Phase::RegulationSecondHalf ||
+        state_.phase_ == Phase::OvertimeFirstHalf || state_.phase_ == Phase::OvertimeHalftime ||
+        state_.phase_ == Phase::OvertimeSecondHalf || state_.phase_ == Phase::MatchComplete) {
         result.error = DraftError::WrongPhase;
         return result;
     }
@@ -698,6 +732,96 @@ DraftResult MatchEngine::confirm_draft_player(const bool admin_override) {
     return result;
 }
 
+ReadyResult MatchEngine::set_captain_ready(std::string captain_player_id, const bool ready,
+                                           const bool admin_override) {
+    ReadyResult result{};
+    if (!state_.enabled_) {
+        result.error = ReadyError::ScrimDisabled;
+        return result;
+    }
+    const bool live_on_three_recovery =
+        state_.phase_ == Phase::LiveOnThree && !ready && admin_override;
+    if (state_.phase_ != Phase::Ready && !live_on_three_recovery) {
+        result.error = ReadyError::WrongPhase;
+        return result;
+    }
+
+    captain_player_id = normalize_player_id(std::move(captain_player_id));
+    if (captain_player_id.empty()) {
+        result.error = ReadyError::InvalidPlayerId;
+        return result;
+    }
+    const auto player = state_.players_.find(captain_player_id);
+    if (player == state_.players_.end()) {
+        result.error = ReadyError::UnknownPlayer;
+        return result;
+    }
+
+    TeamState* team = nullptr;
+    if (state_.team_a_.captain_player_id == captain_player_id) {
+        team = &state_.team_a_;
+    } else if (state_.team_b_.captain_player_id == captain_player_id) {
+        team = &state_.team_b_;
+    } else {
+        result.error = ReadyError::NotCaptain;
+        return result;
+    }
+    if (ready && !admin_override && !player->second.connected) {
+        result.error = ReadyError::CaptainDisconnected;
+        return result;
+    }
+
+    if (live_on_three_recovery) {
+        const auto rewound = transition_to(Phase::Ready);
+        if (!rewound.ok()) {
+            result.error = ReadyError::WrongPhase;
+            return result;
+        }
+        result.changed = true;
+        result.effects = rewound.effects;
+        return result;
+    }
+
+    if (team->captain_ready != ready) {
+        team->captain_ready = ready;
+        result.changed = true;
+    }
+    if (state_.team_a_.captain_ready && state_.team_b_.captain_ready) {
+        auto live_on_three = transition_to(Phase::LiveOnThree);
+        if (!live_on_three.ok()) {
+            result.error = ReadyError::WrongPhase;
+            return result;
+        }
+        result.changed = true;
+        result.effects = std::move(live_on_three.effects);
+    }
+    return result;
+}
+
+TransitionResult MatchEngine::live_on_three_restart_completed() {
+    TransitionResult result{};
+    if (!state_.enabled_) {
+        result.error = TransitionError::ScrimDisabled;
+        return result;
+    }
+    if (state_.phase_ != Phase::LiveOnThree) {
+        result.error = TransitionError::IllegalTransition;
+        return result;
+    }
+
+    ++state_.live_on_three_restarts_completed_;
+    result.changed = true;
+    if (state_.live_on_three_restarts_completed_ == 1) {
+        result.effects.push_back({EffectType::RestartRound, {}, PlayerDestination::Spectator, 1});
+    } else if (state_.live_on_three_restarts_completed_ == 2) {
+        result.effects.push_back({EffectType::RestartRound, {}, PlayerDestination::Spectator, 3});
+    } else {
+        const auto live = transition_to(Phase::RegulationFirstHalf);
+        result.effects.insert(result.effects.end(), live.effects.begin(), live.effects.end());
+    }
+    return result;
+}
+
 TeamState& MatchEngine::mutable_team(const LogicalTeam team) noexcept {
     return team == LogicalTeam::A ? state_.team_a_ : state_.team_b_;
 }
@@ -806,7 +930,8 @@ bool MatchEngine::is_knife_phase() const noexcept {
 bool MatchEngine::are_team_changes_locked() const noexcept {
     return is_knife_phase() || state_.phase_ == Phase::KnifeComplete ||
            state_.phase_ == Phase::SideOrPick || state_.phase_ == Phase::Draft ||
-           state_.phase_ == Phase::Ready;
+           state_.phase_ == Phase::Ready || state_.phase_ == Phase::LiveOnThree ||
+           state_.phase_ == Phase::RegulationFirstHalf;
 }
 
 TransitionResult MatchEngine::require_knife_replay() {
@@ -832,7 +957,9 @@ bool MatchEngine::is_legal_transition(const Phase from, const Phase to) noexcept
     case Phase::Draft:
         return to == Phase::Ready;
     case Phase::Ready:
-        return to == Phase::RegulationFirstHalf;
+        return to == Phase::LiveOnThree;
+    case Phase::LiveOnThree:
+        return to == Phase::Ready || to == Phase::RegulationFirstHalf;
     case Phase::RegulationFirstHalf:
         return to == Phase::Halftime;
     case Phase::Halftime:
